@@ -1,9 +1,9 @@
 name: astrbot_plugin_looki_companion
 display_name: Looki 陪伴记忆
-desc: 让 AI 伴侣不再被困在聊天窗口里，把 Looki 的实时世界整理成“我们”视角的共同经历。
-short_desc: 让 AI 伴侣更自然地走进你的现实世界。
+desc: 让 AI 伴侣不再被困在聊天窗口里，把 Looki 的实时世界整理成“我们”视角的共同经历。`r`nshort_desc: 让 AI 伴侣更自然地走进你的现实世界。
 author: 瑞贝特
 repo: https://github.com/RabbitZheng4424/astrbot_plugin_looki_companion
+social_link: https://rabbitz.icu
 version: 0.1.0
 entry: main.py
 type: plugin

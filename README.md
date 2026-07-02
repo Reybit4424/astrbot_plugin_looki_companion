@@ -11,6 +11,17 @@
 `astrbot_plugin_looki_companion` 试着把 Looki 的实时事件和最近 12 小时 `moments` 整理成“我们”视角的共同经历，让 AI 伴侣不再只是隔着聊天窗口猜测你，而是能在合适的时候，更自然地知道你刚刚去了哪里、做了什么、正在经历什么。
 
 
+
+## 前置项目
+
+本项目基于并依赖 [
+iclydon/looki-mcp](https://github.com/niclydon/looki-mcp)。
+
+- looki-mcp 负责把 Looki REST API 封装为受保护的 MCP 服务。
+- 本插件负责 AstrBot 的按需调用、权限门控、短期缓存和陪伴式摘要。
+- 推荐拓扑：AstrBot 插件 -> looki-mcp -> Looki API。
+- 插件不再直接保存或调用 Looki API Key。
+
 ## 设计目标
 
 - 回答“我们刚才去了哪里”“我们刚刚在干嘛”时，输出一段自然语言叙述
