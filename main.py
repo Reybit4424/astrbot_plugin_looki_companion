@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 from contextlib import AsyncExitStack
@@ -1048,4 +1048,3 @@ class LookiCompanionPlugin(Star):
 
     def _now_local(self) -> datetime:
         return datetime.now().astimezone()
-
