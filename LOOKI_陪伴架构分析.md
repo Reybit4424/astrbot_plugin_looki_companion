@@ -55,7 +55,7 @@ G:\qiongqiong\data\config\astrbot_plugin_looki_companion_config.json
 
 ```json
 {
-  "mcp_url": "https://open.looki.tech/api/v1",
+  "mcp_url": "http://172.17.0.1:3456/mcp",
   "mcp_origin_secret": "运行时私密值"
 }
 ```

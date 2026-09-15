@@ -69,7 +69,8 @@ iclydon/looki-mcp](https://github.com/niclydon/looki-mcp)。
 
 ## 配置项
 
-- `mcp_url`：MCP 服务地址，默认使用服务器内网地址。`r`n- `mcp_origin_secret`：MCP 内网共享密钥。
+- `mcp_url`：MCP 服务地址，默认使用服务器内网地址。
+- `mcp_origin_secret`：MCP 内网共享密钥。
 ## 图片理解来源优先级
 
 开启图片转文字后，插件会按以下顺序尝试：
