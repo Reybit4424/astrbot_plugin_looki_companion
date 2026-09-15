@@ -723,7 +723,7 @@ class LookiCompanionPlugin(Star):
             result = await self._mcp_session.call_tool(name, arguments)
         except Exception as exc:
             raise LookiNetworkError("Looki MCP 调用失败。") from exc
-        if getattr(result, "is_error", False):
+        if getattr(result, "is_error", getattr(result, "isError", False)):
             raise LookiTemporaryUnavailableError("Looki MCP 返回错误。")
         text = "\n".join(getattr(item, "text", "") for item in result.content)
         if not text:
@@ -1048,3 +1048,4 @@ class LookiCompanionPlugin(Star):
 
     def _now_local(self) -> datetime:
         return datetime.now().astimezone()
+
