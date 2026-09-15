@@ -1,3 +1,13 @@
+## 前置项目
+
+本项目基于并依赖 [
+iclydon/looki-mcp](https://github.com/niclydon/looki-mcp)。
+
+- looki-mcp 负责把 Looki REST API 封装为受保护的 MCP 服务。
+- 本插件负责 AstrBot 的按需调用、权限门控、短期缓存和陪伴式摘要。
+- 推荐拓扑：AstrBot 插件 -> looki-mcp -> Looki API。
+- 插件运行时不再直接保存 Looki API Key。
+
 # Looki 陪伴记忆
 
 自己的 AI 伴侣，明明在 QQ 里跟自己聊着天，却没有办法真正接触到你的现实世界。

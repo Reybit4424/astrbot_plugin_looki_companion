@@ -1,16 +1,17 @@
 {
-  "looki_api_key": {
+  "mcp_origin_secret": {
     "type": "string",
-    "description": "Looki API 密钥",
-    "hint": "在 Looki 开放平台申请，将通过请求头 X-API-Key 发送。",
+    "description": "MCP Origin Secret",
+    "hint": "在 Looki 开放平台申请，将通过 x-origin-secret 请求头发送。",
     "obvious_hint": true,
-    "default": ""
+    "default": "",
+    "invisible": true
   },
-  "looki_base_url": {
+  "mcp_url": {
     "type": "string",
-    "description": "Looki API 基础地址",
+    "description": "MCP 服务地址",
     "hint": "默认无需修改。",
-    "default": "https://open.looki.tech/api/v1"
+    "default": "http://172.17.0.1:3456/mcp"
   },
   "enable_realtime": {
     "type": "bool",
@@ -84,7 +85,8 @@
     "description": "视觉模型 API Key",
     "hint": "仅在启用自定义视觉模型时需要填写。",
     "default": "",
-    "obvious_hint": true
+    "obvious_hint": true,
+    "invisible": true
   },
   "enable_debug_logging": {
     "type": "bool",

@@ -4,7 +4,7 @@ desc: 让 AI 伴侣不再被困在聊天窗口里，把 Looki 的实时世界整
 author: 瑞贝特
 repo: https://github.com/RabbitZheng4424/astrbot_plugin_looki_companion
 social_link: https://rabbitz.icu
-version: 0.1.0
+version: 0.1.1
 entry: main.py
 type: plugin
 astrbot_version: ">=4.23.1"
