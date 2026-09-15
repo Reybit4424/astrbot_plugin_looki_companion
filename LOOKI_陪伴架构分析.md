@@ -55,8 +55,8 @@ G:\qiongqiong\data\config\astrbot_plugin_looki_companion_config.json
 
 ```json
 {
-  "looki_base_url": "https://open.looki.tech/api/v1",
-  "looki_api_key": "运行时私密值"
+  "mcp_url": "https://open.looki.tech/api/v1",
+  "mcp_origin_secret": "运行时私密值"
 }
 ```
 
@@ -291,7 +291,7 @@ DELETE /v1/state/{id}
 ### Key 存储约定
 
 - 运行配置：`G:\qiongqiong\data\config\astrbot_plugin_looki_companion_config.json`
-- 字段：`looki_api_key`
+- 字段：`mcp_origin_secret`
 - Base URL：`https://open.looki.tech/api/v1`
 - 该配置文件不纳入插件 Git 仓库，不进入 Markdown、Release 或日志。
 - Key 如曾经在聊天、终端历史或临时文件中暴露，建议在 Looki 控制台轮换；之后只更新运行配置。

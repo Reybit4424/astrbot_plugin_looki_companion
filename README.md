@@ -22,16 +22,6 @@ iclydon/looki-mcp](https://github.com/niclydon/looki-mcp)。
 
 
 
-## 前置项目
-
-本项目基于并依赖 [
-iclydon/looki-mcp](https://github.com/niclydon/looki-mcp)。
-
-- looki-mcp 负责把 Looki REST API 封装为受保护的 MCP 服务。
-- 本插件负责 AstrBot 的按需调用、权限门控、短期缓存和陪伴式摘要。
-- 推荐拓扑：AstrBot 插件 -> looki-mcp -> Looki API。
-- 插件不再直接保存或调用 Looki API Key。
-
 ## 设计目标
 
 - 回答“我们刚才去了哪里”“我们刚刚在干嘛”时，输出一段自然语言叙述
@@ -79,73 +69,7 @@ iclydon/looki-mcp](https://github.com/niclydon/looki-mcp)。
 
 ## 配置项
 
-- `looki_api_key`
-  - 必填
-  - Looki API Key
-
-- `looki_base_url`
-  - 默认值：`https://open.looki.tech/api/v1`
-  - 正常无需修改
-
-- `enable_realtime`
-  - 默认值：`true`
-  - 是否启用 `/realtime/latest-event`
-
-- `enable_in_group_chat`
-  - 默认值：`false`
-  - 群聊中是否允许使用 Looki
-
-- `admin_only`
-  - 默认值：`true`
-  - 是否仅管理员/主人可触发 Looki 查询
-
-- `request_timeout`
-  - 默认值：`30`
-  - 单次请求超时秒数
-
-- `recent_experience_window_minutes`
-  - 默认值：`120`
-  - 最近经历工具默认回看窗口
-
-- `realtime_cache_seconds`
-  - 默认值：`15`
-  - 实时事件短缓存
-
-- `moment_summary_max_chars`
-  - 默认值：`220`
-  - 文本裁剪长度
-
-- `enable_image_captioning`
-  - 默认值：`false`
-  - 是否开启图片转文字
-
-- `caption_model`
-  - 视觉模型名称
-
-- `caption_provider_id`
-  - 可选指定 AstrBot 已配置的视觉 / 多模态 Provider
-  - 留空时会自动回退到 AstrBot 默认图片描述 Provider，再回退当前聊天 Provider
-
-- `caption_api_base`
-  - 默认值：`https://api.siliconflow.cn/v1`
-
-- `caption_api_key`
-  - 自定义视觉模型 API Key
-
-- `enable_debug_logging`
-  - 默认值：`false`
-  - 是否开启调试日志
-
-- `inject_routing_hint`
-  - 默认值：`true`
-  - 是否向 Agent 注入 Looki 路由提示
-
-- `inject_companion_state`
-  - 默认值：`true`
-  - 是否注入隐性陪伴态提示，让模型默认只把最近现实处境当作背景感知
-  - 开启时默认走“智能触发”，不是每轮都注入
-  - 关闭后通常响应更快、token 消耗更低
-
+- `mcp_url`：MCP 服务地址，默认使用服务器内网地址。`r`n- `mcp_origin_secret`：MCP 内网共享密钥。
 ## 图片理解来源优先级
 
 开启图片转文字后，插件会按以下顺序尝试：
