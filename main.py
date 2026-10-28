@@ -26,7 +26,7 @@ from .schedule_store import ScheduleStore
 
 PLUGIN_NAME = "astrbot_plugin_looki_companion"
 AUTHOR = "瑞贝特"
-VERSION = "0.5.2"
+VERSION = "0.5.3"
 DEFAULT_LOOKI_BASE_URL = "https://open.looki.tech/api/v1"
 CLUE_SCOPE_ADMIN = "仅对管理成员开放"
 CLUE_SCOPES = (CLUE_SCOPE_ADMIN, "关闭")
@@ -206,7 +206,7 @@ class LookiCompanionPlugin(Star):
 
     @filter.on_llm_request()
     async def add_schedule_clues(self, event: AstrMessageEvent, req: ProviderRequest):
-        if not event.is_private_chat() or not event.is_admin():
+        if not event.is_admin():
             return
         if str(self.config.get("clue_scope") or CLUE_SCOPE_ADMIN).strip() != CLUE_SCOPE_ADMIN:
             return

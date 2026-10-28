@@ -2,7 +2,7 @@
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.23.1-2f6f5e)](https://github.com/AstrBotDevs/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.5.2-176b56)](https://github.com/RabbitZheng4424/astrbot_plugin_looki_companion/releases)
+[![Version](https://img.shields.io/badge/version-0.5.3-176b56)](https://github.com/RabbitZheng4424/astrbot_plugin_looki_companion/releases)
 [![License](https://img.shields.io/badge/license-MIT-e0a908)](LICENSE)
 [![QQ Group](https://img.shields.io/badge/QQ%E7%BE%A4-637906820-4a90d9)](https://qm.qq.com/q/637906820)
 
@@ -38,7 +38,7 @@
 - **手动补录与编辑**：支持新增、修改、删除；删除采用墓碑标记，后续同步不会把已删记录复活。
 - **冲突保护**：同步不会覆盖你手工编辑过的记录，也不会删除手工录入的数据。
 - **Bot 查阅**：LLM 工具 `query_looki_schedule` 支持按日期范围与关键词查询，最多 366 天、100 条。
-- **近期线索注入**：可选在 owner 私聊的对话上下文中注入压缩后的近期生活线索，群聊不注入。
+- **近期线索注入**：可选在管理员（`admins_id`）的对话上下文中注入压缩后的近期生活线索，私聊与群聊均生效；非管理员不注入。
 - **隐私友好**：原始 JSON 默认不落库，任何接口都不返回该字段。
 
 ## 界面布局
@@ -96,7 +96,7 @@ pydantic>=2.0.0
 | `backfill_days` | int | `7` | 每次同步向前回填的天数。 |
 | `request_timeout_seconds` | int | `20` | Looki 请求超时秒数。 |
 | `timezone` | string | `Asia/Shanghai` | 日程展示与同步使用的 IANA 时区。 |
-| `clue_scope` | string | `仅对管理成员开放` | 近期线索注入范围：`仅对管理成员开放` / `关闭`。仅私聊生效。 |
+| `clue_scope` | string | `仅对管理成员开放` | 近期线索注入范围：`仅对管理成员开放` / `关闭`。管理员私聊与群聊均生效。 |
 | `allow_group_query` | bool | `false` | 是否允许在群聊使用日程查询工具。 |
 | `store_raw_json` | bool | `false` | 是否把 Looki 原始响应写入 `raw_json` 列（仅调试用）。 |
 | `clue_days` | int | `7` | 线索回看天数，最大 31。 |
@@ -128,7 +128,7 @@ pydantic>=2.0.0
 
 ### 近期线索注入
 
-`clue_scope` 为 `仅对管理成员开放`（默认）时，只有 AstrBot 管理员（`admins_id`）的私聊会话会在对话前获得少量近期结构化线索；设为 `关闭` 则不注入。群聊永不注入。
+`clue_scope` 为 `仅对管理成员开放`（默认）时，AstrBot 管理员（`admins_id`）在私聊与群聊中的对话都会在请求前获得少量近期结构化线索；非管理员不注入；设为 `关闭` 则完全不注入。
 
 线索由记录中的日期、结束时间和关键词压缩生成，数量受 `clue_days` 与 `max_clues` 控制。描述保守，例如较晚结束的活动只会表述为「晚间仍有活动记录」，不会推断睡眠或健康情况。
 
@@ -158,7 +158,7 @@ pydantic>=2.0.0
 - 插件不主动发消息、不定时推送，不读取或调用其他插件。
 - `raw_json` 默认不写入，开启后也只在本地数据库中，任何 Web API 都不返回该字段。
 - WebUI 读写 API 通过 AstrBot 插件页面的认证 bridge 调用，匿名请求返回 401。
-- 线索注入仅发生在管理员私聊，群聊不注入。
+- 线索注入只对 AstrBot 管理员生效，覆盖其私聊与群聊会话；非管理员不注入。
 - 其他插件可在兼容的 AstrBot 进程中导入公开的 `ScheduleStore` 类读取本地日程。
 
 ## 常见问题
@@ -231,6 +231,10 @@ astrbot_plugin_looki_companion/
 - 未在其他最低版本逐一运行验证。
 
 ## 更新日志
+
+### 0.5.3
+
+- 线索注入不再限制私聊：管理员在群聊中提问同样会注入近期线索，非管理员依旧不注入。
 
 ### 0.5.2
 

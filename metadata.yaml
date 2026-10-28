@@ -5,7 +5,7 @@ short_desc: Looki 日程同步、持久化、日历编辑与 Bot 按需查阅。
 author: 瑞贝特
 repo: https://github.com/RabbitZheng4424/astrbot_plugin_looki_companion
 social_link: https://rabbitz.icu
-version: 0.5.2
+version: 0.5.3
 entry: main.py
 type: plugin
 astrbot_version: ">=4.23.1"
