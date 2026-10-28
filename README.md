@@ -2,13 +2,13 @@
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.23.1-2f6f5e)](https://github.com/AstrBotDevs/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.6.0-176b56)](https://github.com/RabbitZheng4424/astrbot_plugin_looki_companion/releases)
+[![Version](https://img.shields.io/badge/version-0.7.0-176b56)](https://github.com/RabbitZheng4424/astrbot_plugin_looki_companion/releases)
 [![License](https://img.shields.io/badge/license-MIT-e0a908)](LICENSE)
 [![QQ Group](https://img.shields.io/badge/QQ%E7%BE%A4-637906820-4a90d9)](https://qm.qq.com/q/637906820)
 
-把 Looki 生成的结构化日程同步到 AstrBot 本地，提供日历页面查看与编辑，并让 Bot 在需要时查阅近期日程与生活线索。
+把 Looki 生成的结构化日程同步到 AstrBot 本地，提供日历页面查看与编辑，并让 Bot 在需要时查阅近期日程、按严格时段挑选照片，以及发送原图或图生图结果。
 
-插件不依赖其他插件，不会主动发消息，也不会定时推送。
+插件不依赖其他插件，不会主动发消息，也不会定时推送；图片只在你与 Bot 对话触发后被动发送。
 
 ---
 
@@ -38,9 +38,12 @@
 - **手动补录与编辑**：支持新增、修改、删除；删除采用墓碑标记，后续同步不会把已删记录复活。
 - **冲突保护**：同步不会覆盖你手工编辑过的记录，也不会删除手工录入的数据。
 - **Bot 查阅**：LLM 工具 `query_looki_schedule` 支持按日期范围与关键词查询，最多 366 天、100 条。
+- **严格时段选图**：LLM 工具 `send_looki_image` 只获取与指定日期、起止时间相交的 Looki 图片，临时下载默认 3 张候选图，由多模态模型内部挑选 1 张，最终只发送这 1 张。
+- **原图 / 图生图**：默认以选中的图片为参考生成二次元风格图片，可修改默认风格或单次追加调整；也可切换为直接发送原图，两种模式都会先挑图。
+- **独立白名单**：白名单成员可在私聊和任意群聊查询日程、使用图片功能；白名单群中的所有成员均可在该群使用，无需开启群聊总开关。
 - **对话校正**：Bot 可根据管理员对话追加校正注记，保留多条历史；原始 Looki 内容不变，后续查询以最新注记为准。
 - **近期线索注入**：可选在管理员（`admins_id`）的对话上下文中注入压缩后的近期生活线索与对话校正，私聊与群聊均生效；非管理员不注入。
-- **隐私友好**：原始 JSON 默认不落库，任何接口都不返回该字段。
+- **隐私友好**：原始 JSON 默认不落库，任何接口都不返回该字段；候选图和生成图只临时保存，发送结束或失败后自动清理。
 
 ## 界面布局
 
@@ -69,7 +72,7 @@
 - **左侧**：当天时间轴，按时间段排列；每条显示起止时间、小标题、关键词、原始描述、音频摘要及全部「对话校正」注记与创建时间；仅手动补录的条目带「手动」徽标；悬停出现编辑按钮，点击选中。
 - **右上**：月视图，可切换上月 / 下月 / 回到本月；每天下方以黄点表示记录数（封顶 5 个）。
 - **右下**：当天时间轴目录（时间 + 小标题），单击平滑滚动到左侧对应时段并高亮，等同页内锚点。
-- **设置页**：Looki 连接参数与行为开关，API Key 掩码显示、可手动查看明文。
+- **设置页**：Looki 连接参数、白名单、行为开关、候选图数量、原图 / 图生图模式，以及挑图和图生图模型配置；API Key 掩码显示、可手动查看明文。
 - 窄屏（≤960px）自动折叠为单栏，侧栏取消吸顶。
 
 ## 快速开始
@@ -79,6 +82,7 @@
 3. 打开插件配置，填写 `looki_api_key`（Looki 开放 API Key，请求头为 `x-api-key`）。
 4. 保持 `auto_sync` 开启即可；也可以到插件页面点「立即同步」。
 5. 打开插件页面确认数据已落库。
+6. 如需图片功能，选择支持图像输入的挑图模型；图生图可继续选择多模态模型，或填写 OpenAI 兼容 `/images/edits` 接口。只要原图时开启「直接发送原图」，无需配置图生图模型。
 
 依赖仅两项，安装时 AstrBot 会自动处理：
 
@@ -99,10 +103,21 @@ pydantic>=2.0.0
 | `request_timeout_seconds` | int | `20` | Looki 请求超时秒数。 |
 | `timezone` | string | `Asia/Shanghai` | 日程展示与同步使用的 IANA 时区。 |
 | `clue_scope` | string | `仅对管理成员开放` | 近期线索注入范围：`仅对管理成员开放` / `关闭`。管理员私聊与群聊均生效。 |
-| `allow_group_query` | bool | `false` | 是否允许在群聊使用日程查询工具。 |
+| `allow_group_query` | bool | `false` | 是否允许在群聊使用日程与图片工具；白名单独立放行，不受此开关限制。 |
+| `whitelist_user_ids` | string | 空 | 白名单成员 ID，每行一个或用逗号分隔；成员在私聊和任意群聊均可查询日程、使用图片功能。 |
+| `whitelist_group_ids` | string | 空 | 白名单群 ID，每行一个或用逗号分隔；群内所有成员均可在该群查询日程、使用图片功能。 |
 | `store_raw_json` | bool | `false` | 是否把 Looki 原始响应写入 `raw_json` 列（仅调试用）。 |
 | `clue_days` | int | `7` | 线索回看天数，最大 31。 |
 | `max_clues` | int | `3` | 最多注入的线索条数，最大 10。 |
+| `image_candidate_count` | int | `3` | 交给多模态模型挑选的候选图数量，范围 1–9；最终只发送 1 张。 |
+| `image_send_original` | bool | `false` | 开启后发送选中的原图；关闭时对选中图片进行图生图。 |
+| `image_style_prompt` | string | 日系二次元插画风格提示词 | 默认图生图风格，单次调用可额外调整。 |
+| `image_selection_provider_id` | string | 空 | 挑图多模态 Provider ID；留空使用当前对话模型。 |
+| `image_generation_mode` | string | `multimodal` | `multimodal` 使用多模态模型；`openai_compatible` 使用兼容图生图接口。 |
+| `image_generation_provider_id` | string | 空 | 多模态图生图 Provider ID，须支持图像输入与图片输出；留空使用挑图模型。 |
+| `image_api_base_url` | string | 空 | 兼容接口 Base URL，可填写到 `/v1` 或完整 `/images/edits`。 |
+| `image_api_model` | string | 空 | 兼容接口的图生图模型名称。 |
+| `image_api_key` | string | 空 | 兼容接口 API Key；留空则不发送 Authorization 头。 |
 
 > 高频轮询只代表插件的请求频率，不能使 Looki 尚未生成的数据提前可用。
 
@@ -126,8 +141,22 @@ pydantic>=2.0.0
 
 **权限分两层**：
 
-1. 插件层 `allow_group_query` 决定群聊是否开放（默认关闭）；私聊查询不受身份限制。
-2. AstrBot 工具权限决定谁能触发：控制台「扩展 → 组件」中的 `query_looki_schedule` 可设为管理员或成员，也可整体停用。
+1. 插件层：私聊查询保持开放；群聊由 `allow_group_query` 总开关、成员白名单或群白名单任一条件放行。白名单独立生效，无需开启总开关。
+2. AstrBot 工具权限决定谁能触发：控制台「扩展 → 组件」中的 `query_looki_schedule` 与 `send_looki_image` 可分别设为管理员或成员，也可单独停用。
+
+「对话校正」不随白名单开放，始终只有 AstrBot 管理员可以写入。
+
+### LLM 工具 `send_looki_image`
+
+例如对 Bot 说：「把今天 14:00 到 15:00 的照片挑一张，转成二次元风格发给我。」日期或起止时间不明确时，Bot 应先询问，不得猜测。
+
+- 参数：`date`、`start_time`、`end_time` 必填；`preference` 可描述选图偏好，`style_adjustment` 可追加本次风格调整。
+- 只处理与指定时段相交且带 Looki ID 的日程，通过 `/moments/{moment_id}/files` 按需获取图片；无图时明确返回，不扩展到当天其他时段。
+- 默认临时下载 3 张有效候选图（可配置 1–9 张），全部交给挑图多模态模型，模型只返回一个有效候选编号。
+- 候选图不会直接发给用户。无论原图模式还是图生图模式，最终都只发送选中的 1 张。
+- 默认图生图提示词为日系二次元插画风格，可在设置中修改，也可通过 `style_adjustment` 单次调整。
+- 多模态图生图使用 AstrBot Provider；专用图生图使用 OpenAI 兼容 `/images/edits`，参考图以单图字段 `image` 上传，支持返回 `b64_json` 或 `url`。
+- 挑图结果无效、图生图未返回图片等情况会明确报错，不会随机选图，也不会静默退化为纯文生图。
 
 ### 对话校正
 
@@ -172,7 +201,9 @@ pydantic>=2.0.0
 - 插件不主动发消息、不定时推送，不读取或调用其他插件。
 - `raw_json` 默认不写入，开启后也只在本地数据库中，任何 Web API 都不返回该字段。
 - WebUI 读写 API 通过 AstrBot 插件页面的认证 bridge 调用，匿名请求返回 401。
-- 线索注入只对 AstrBot 管理员生效，覆盖其私聊与群聊会话；非管理员不注入。
+- 线索注入只对 AstrBot 管理员生效，覆盖其私聊与群聊会话；非管理员不注入。白名单只放开日程读取与图片工具，不开放校正写入或线索注入。
+- 图片不写入 SQLite，临时下载地址也不长期保存。每次调用使用独立临时目录，发送完成或失败后自动删除候选图和生成图。
+- 使用多模态挑图或图生图时，候选图 / 参考图会发送给你配置的模型服务；使用第三方兼容接口时，参考图和提示词也会发送到该服务。请按对应服务的隐私政策选择模型。
 - 其他插件可在兼容的 AstrBot 进程中导入公开的 `ScheduleStore` 类读取本地日程。
 
 ## 常见问题
@@ -187,7 +218,13 @@ Looki 侧尚未生成该日期的结构化片段，或记录缺少开始 / 结�
 正常情况下不会：删除写入墓碑标记。若出现，请确认不是手动重新补录的同名记录。
 
 **Q：群里问日程没反应？**
-默认群聊关闭查询。请开启 `allow_group_query`，并在「扩展 → 组件」中为该工具配置权限。
+默认群聊关闭查询。可开启 `allow_group_query`，或把成员 / 群加入对应白名单；同时在「扩展 → 组件」中为 `query_looki_schedule` 配置工具权限。使用图片功能还需放开 `send_looki_image`。
+
+**Q：为什么指定时段找不到图片？**
+该时段可能没有带 Looki ID 的日程、对应 Moment 没有图片文件，或候选图下载失败。插件不会自动查询其他时段，请先同步日程并确认时间范围。
+
+**Q：原图模式还需要多模态模型吗？**
+需要。原图模式只是跳过图生图，仍由多模态模型从候选图中选择 1 张。
 
 **Q：`store_raw_json` 要不要开？**
 除非排查字段映射问题，建议保持关闭，减少本地隐私原文。
@@ -197,42 +234,40 @@ Looki 侧尚未生成该日期的结构化片段，或记录缺少开始 / 结�
 
 ## 开发与测试
 
-测试覆盖 `schedule_store.py` 与 LLM 工具调用，使用标准库 `unittest`，不依赖 AstrBot 运行时的网络请求。
+测试覆盖 `schedule_store.py`、`image_service.py` 与 LLM 工具调用，使用标准库 `unittest`；Looki 网络请求、图片下载和模型调用均使用 mock，不依赖真实服务。
 
 ```bash
 # 在仓库根目录执行（Windows 用 ; 分隔，Linux / macOS 用 :）
-set PYTHONPATH=<插件目录>;<AstrBot 目录>
-python tests/test_schedule_store.py -v
+set PYTHONPATH=<插件父目录>;<插件目录>;<AstrBot 目录>
+python -m unittest discover -s tests -v
 ```
 
-当前共 19 个用例，覆盖：
+当前共 26 个用例，覆盖：
 
-- 请求头与字段映射（`description` / `audio_summary` 不进入日程事实）
-- 远端 upsert 幂等、用户编辑保护
-- 手工记录在同步后保留
-- 时区与日期范围校验
-- 关键词降级与空结果
-- 线索不推断睡眠
-- 手动更新 / 删除持久化
-- 手动编辑不覆盖已同步的音频摘要
-- `search()` 关键词命中 / 未命中降级 / 无关键词
-- `store_raw_json` 开关写库行为
-- `PRAGMA user_version` 与 schema 版本一致
-- `clues()` 使用传入时区并携带对话校正
-- 多条校正历史、参数校验、同步后保留与原始字段不变
-- 校正工具的管理员权限及查询工具的校正返回字段
+- 请求头与字段映射、远端 upsert 幂等、用户编辑保护、手工记录保留
+- 时区与日期范围校验、关键词降级与空结果、线索不推断睡眠
+- 手动更新 / 删除持久化、音频摘要保护、`store_raw_json` 开关与 schema 版本
+- 多条对话校正历史、管理员写入权限、同步后保留及原始字段不变
+- 私聊、群聊总开关、成员白名单和群白名单的日程 / 图片访问权限
+- 严格时段相交与无图不扩展、候选数量、全部候选图传入多模态模型
+- 原图模式仍先挑图、最终只发送 1 张，以及成功和失败后的临时目录清理
+- 多模态图生图参考图、Provider、默认风格与单次调整
+- OpenAI 兼容 `/images/edits` 的单图字段和返回图片处理
+- 无效候选编号与模型失败路径
 
 ## 目录结构
 
 ```
 astrbot_plugin_looki_companion/
-├── main.py                  # 插件入口：同步调度、Web API、LLM 工具、线索注入
+├── main.py                  # 插件入口：同步调度、Web API、LLM 工具、白名单、线索注入
+├── image_service.py         # 严格时段选图、临时下载、模型挑图、图生图与发送清理
 ├── schedule_store.py        # SQLite 存储层：schema、去重、搜索、线索
 ├── _conf_schema.json        # 配置项定义
 ├── metadata.yaml            # 插件元信息
 ├── requirements.txt         # httpx / pydantic
-├── pages/schedule/index.html# 日历页面（标签页 + 时间轴 + 月视图 + 当天目录）
+├── pages/schedule/index.html# 日历与设置页面
 ├── tests/test_schedule_store.py
+├── tests/test_image_service.py
 ├── LICENSE                  # MIT
 └── README.md
 ```
@@ -244,9 +279,19 @@ astrbot_plugin_looki_companion/
 - 线索注入使用 `on_llm_request` 与 `ProviderRequest.extra_user_content_parts`。
 - 页面使用插件 Pages 与 `context.register_web_api()`，仅通过页面 bridge 的 GET / POST 交互。
 - 已在本地 AstrBot 4.26.4 完成部署验证：插件加载、自动同步、手动同步幂等、页面资产与 bridge 协议、扩展 API 认证（匿名 401）、参数校验（400）、路由匹配（404）、增删改全生命周期（含删除后同步不复活）、config 保存回路、月度聚合接口。
+- 0.7.0 已在服务器完成只读部署核验：插件启用、三项 LLM 工具注册、新增配置字段与密钥掩码正常，启动日志无 Traceback；真实 Looki 图片下载、多模态挑图和图生图链路由本地 mock 测试覆盖，未进行付费端到端调用。
 - 未在其他最低版本逐一运行验证。
 
 ## 更新日志
+
+### 0.7.0
+
+- 新增 `send_looki_image`：按指定日期和严格时段获取 Looki 图片，默认临时下载 3 张候选图，由多模态模型选择 1 张后发送。
+- 支持原图直发与图生图两种模式；默认二次元风格，可修改默认提示词或单次追加风格调整，两种模式最终都只发送 1 张图片。
+- 支持分别配置挑图与图生图多模态 Provider，也可使用 OpenAI 兼容 `/images/edits` 图生图接口。
+- 新增成员白名单与群白名单，独立放行日程查询和图片功能，不受 `allow_group_query` 总开关限制；对话校正与近期线索仍仅面向管理员。
+- 候选图仅在调用期间临时保存，成功或失败后自动清理；指定时段无图时不会扩展到其他时段。
+- 设置页新增白名单、候选图数量、原图开关、风格提示词和双模型 / 兼容接口配置；测试增至 26 项。
 
 ### 0.6.0
 

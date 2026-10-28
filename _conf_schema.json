@@ -58,5 +58,61 @@
     "type": "int",
     "description": "最多注入的线索条数，最大 10 条。",
     "default": 3
+  },
+  "whitelist_user_ids": {
+    "type": "string",
+    "description": "白名单成员 ID，每行一个，也可用逗号分隔。成员在私聊和任意群聊都可查询日程并使用图片功能，不受群聊总开关限制。",
+    "default": ""
+  },
+  "whitelist_group_ids": {
+    "type": "string",
+    "description": "白名单群 ID，每行一个，也可用逗号分隔。群内所有成员都可查询日程并使用图片功能，不受群聊总开关限制。",
+    "default": ""
+  },
+  "image_candidate_count": {
+    "type": "int",
+    "description": "每次交给多模态模型挑选的候选图片数量，1-9，默认 3。用户最终只会收到选中的 1 张。",
+    "default": 3
+  },
+  "image_send_original": {
+    "type": "bool",
+    "description": "开启后直接发送模型选中的原图；关闭时使用选中的图片进行图生图。两种模式都会先挑图。",
+    "default": false
+  },
+  "image_style_prompt": {
+    "type": "string",
+    "description": "默认图生图风格提示词，单次调用可额外调整。",
+    "default": "日系二次元插画风格，赛璐璐上色，线稿干净，配色柔和，画面干净通透，避免写实摄影质感与过度磨皮。"
+  },
+  "image_selection_provider_id": {
+    "type": "string",
+    "description": "负责同时理解全部候选图并返回编号的图像输入多模态 Provider ID；留空时使用当前对话模型。",
+    "default": ""
+  },
+  "image_generation_mode": {
+    "type": "string",
+    "description": "图生图方式：multimodal 使用 AstrBot 多模态模型，openai_compatible 使用 OpenAI 兼容 /images/edits 接口。",
+    "options": ["multimodal", "openai_compatible"],
+    "default": "multimodal"
+  },
+  "image_generation_provider_id": {
+    "type": "string",
+    "description": "多模态图生图 Provider ID，须支持参考图输入和图片输出；留空时使用挑图模型。",
+    "default": ""
+  },
+  "image_api_base_url": {
+    "type": "string",
+    "description": "OpenAI 兼容图生图接口 Base URL，可填写到 /v1 或完整 /images/edits 地址。",
+    "default": ""
+  },
+  "image_api_model": {
+    "type": "string",
+    "description": "OpenAI 兼容图生图模型名称。",
+    "default": ""
+  },
+  "image_api_key": {
+    "type": "string",
+    "description": "OpenAI 兼容图生图接口 API Key；留空表示不发送 Authorization 头。",
+    "default": ""
   }
 }

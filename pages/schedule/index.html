@@ -137,6 +137,7 @@ button{cursor:pointer}
 /* ---------- 设置页 ---------- */
 .settings{max-width:860px;margin:20px auto;padding:24px}
 .settings h2{font-size:17px}
+.settings h3{grid-column:1/-1;margin-top:10px;padding-top:16px;border-top:1px solid var(--line);font-size:14px}
 .settings .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px;margin-top:16px}
 .settings .grid2 label{display:grid;gap:5px;font-size:12.5px;color:var(--muted)}
 .settings .grid2 label input{width:100%}
@@ -224,10 +225,23 @@ dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
     <label>线索天数<input id="cfgClueDays" type="number" min="1" max="31"></label>
     <label>线索条数上限<input id="cfgMaxClues" type="number" min="0" max="10"></label>
     <label>线索注入范围<select id="cfgScope"><option>仅对管理成员开放</option><option>关闭</option></select></label>
+    <h3>访问与白名单</h3>
+    <label>白名单成员 ID<textarea id="cfgWhitelistUsers" rows="3" placeholder="每行一个，也可用逗号分隔"></textarea></label>
+    <label>白名单群 ID<textarea id="cfgWhitelistGroups" rows="3" placeholder="每行一个，也可用逗号分隔"></textarea></label>
+    <h3>图片与模型</h3>
+    <label>候选图片数量<input id="cfgImageCount" type="number" min="1" max="9"></label>
+    <label>挑图多模态模型<select id="cfgSelectionProvider"><option value="">跟随当前对话模型</option></select></label>
+    <label>图生图方式<select id="cfgGenerationMode"><option value="multimodal">AstrBot 多模态模型</option><option value="openai_compatible">OpenAI 兼容 /images/edits</option></select></label>
+    <label>图生图多模态模型<select id="cfgGenerationProvider"><option value="">跟随挑图模型</option></select></label>
+    <label class="full">默认图生图风格<textarea id="cfgImageStyle" rows="3"></textarea></label>
+    <label class="full">兼容图生图接口地址<input id="cfgImageApiUrl" placeholder="https://example.com/v1"></label>
+    <label>兼容图生图模型<input id="cfgImageApiModel" placeholder="模型名称"></label>
+    <label>兼容接口 API Key<input id="cfgImageApiKey" type="password" autocomplete="off"></label>
   </div>
   <div class="checks">
     <label class="check"><input id="cfgAuto" type="checkbox"><span>自动后台同步<small>插件启动后立即同步一次，此后按间隔轮询</small></span></label>
-    <label class="check"><input id="cfgGroup" type="checkbox"><span>在群聊中开放查询<small>默认关闭；群里谁能用由 AstrBot 工具权限控制</small></span></label>
+    <label class="check"><input id="cfgGroup" type="checkbox"><span>在群聊中开放查询<small>总开关默认关闭；白名单成员和白名单群无需开启此项</small></span></label>
+    <label class="check"><input id="cfgImageOriginal" type="checkbox"><span>直接发送选中的原图<small>关闭时进行图生图；两种模式都会先由模型从候选图中挑选 1 张</small></span></label>
     <label class="check"><input id="cfgRaw" type="checkbox"><span>保存远端原始 JSON<small>含隐私原文，默认关闭，仅供调试</small></span></label>
   </div>
   <div class="foot"><button class="icon" id="cfgCancel">取消</button><button class="primary" id="cfgSave">保存设置</button></div>
@@ -483,6 +497,15 @@ async function status(){
 
 /* ---------- 设置 ---------- */
 let keyRevealed=false;
+function fillProviders(id,providerIds,current,emptyLabel){
+  const select=$(id),ids=Array.isArray(providerIds)?providerIds:[];
+  select.replaceChildren(new Option(emptyLabel,''));
+  for(const providerId of new Set([...ids,...(current?[current]:[])])){
+    const loaded=ids.includes(providerId);
+    select.append(new Option(loaded?providerId:`${providerId}（当前未加载）`,providerId));
+  }
+  select.value=current||'';
+}
 async function loadConfig(){
   let c={};try{c=await bridge.apiGet('config')}catch(e){}
   keyRevealed=false;$('cfgKey').type='password';$('cfgKey').value=c.looki_api_key_masked||'';
@@ -492,6 +515,17 @@ async function loadConfig(){
   $('cfgInterval').value=c.sync_interval_minutes;$('cfgBackfill').value=c.backfill_days;
   $('cfgTz').value=c.timezone;$('cfgTimeout').value=c.request_timeout_seconds;
   $('cfgClueDays').value=c.clue_days;$('cfgMaxClues').value=c.max_clues;
+  $('cfgWhitelistUsers').value=c.whitelist_user_ids||'';
+  $('cfgWhitelistGroups').value=c.whitelist_group_ids||'';
+  $('cfgImageCount').value=c.image_candidate_count??3;
+  $('cfgImageOriginal').checked=!!c.image_send_original;
+  $('cfgImageStyle').value=c.image_style_prompt||'';
+  $('cfgGenerationMode').value=c.image_generation_mode||'multimodal';
+  fillProviders('cfgSelectionProvider',c.image_provider_ids,c.image_selection_provider_id,'跟随当前对话模型');
+  fillProviders('cfgGenerationProvider',c.image_provider_ids,c.image_generation_provider_id,'跟随挑图模型');
+  $('cfgImageApiUrl').value=c.image_api_base_url||'';
+  $('cfgImageApiModel').value=c.image_api_model||'';
+  $('cfgImageApiKey').value=c.image_api_key_masked||'';
 }
 $('eye').onclick=async()=>{
   keyRevealed=!keyRevealed;
@@ -512,6 +546,12 @@ $('cfgSave').onclick=async()=>{
     sync_interval_minutes:+$('cfgInterval').value,backfill_days:+$('cfgBackfill').value,
     timezone:$('cfgTz').value.trim(),request_timeout_seconds:+$('cfgTimeout').value,
     clue_days:+$('cfgClueDays').value,max_clues:+$('cfgMaxClues').value,
+    whitelist_user_ids:$('cfgWhitelistUsers').value,whitelist_group_ids:$('cfgWhitelistGroups').value,
+    image_candidate_count:+$('cfgImageCount').value,image_send_original:$('cfgImageOriginal').checked,
+    image_style_prompt:$('cfgImageStyle').value.trim(),image_selection_provider_id:$('cfgSelectionProvider').value,
+    image_generation_mode:$('cfgGenerationMode').value,image_generation_provider_id:$('cfgGenerationProvider').value,
+    image_api_base_url:$('cfgImageApiUrl').value.trim(),image_api_model:$('cfgImageApiModel').value.trim(),
+    image_api_key:$('cfgImageApiKey').value.trim(),
   };
   try{await bridge.apiPost('config',body);await loadConfig();await status();switchTab(false)}
   catch(err){alert('保存失败：'+(err?.message||err))}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,14 +23,35 @@ from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
+from .image_service import DEFAULT_ANIME_PROMPT, LookiImageService
 from .schedule_store import ScheduleStore
 
 PLUGIN_NAME = "astrbot_plugin_looki_companion"
 AUTHOR = "瑞贝特"
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 DEFAULT_LOOKI_BASE_URL = "https://open.looki.tech/api/v1"
 CLUE_SCOPE_ADMIN = "仅对管理成员开放"
 CLUE_SCOPES = (CLUE_SCOPE_ADMIN, "关闭")
+
+
+def _config_ids(value: Any) -> set[str]:
+    if isinstance(value, (list, tuple, set)):
+        values = value
+    else:
+        values = re.split(r"[\s,，;；]+", str(value or ""))
+    return {str(item).strip() for item in values if str(item).strip()}
+
+
+def _has_schedule_access(plugin: Any, event: Any) -> bool:
+    if event is None or event.is_private_chat():
+        return True
+    sender_id = str(event.get_sender_id() or "")
+    group_id = str(event.get_group_id() or "")
+    if sender_id and sender_id in _config_ids(plugin.config.get("whitelist_user_ids")):
+        return True
+    if group_id and group_id in _config_ids(plugin.config.get("whitelist_group_ids")):
+        return True
+    return bool(plugin.config.get("allow_group_query", False))
 
 
 class LookiScheduleProvider:
@@ -103,10 +125,9 @@ class QueryScheduleTool(FunctionTool[AstrAgentContext]):
         if not plugin:
             return "没有日程记录。"
         event = context.context.event
-        # 查询权限不再做 owner 限制：私聊开放，群聊由 allow_group_query 开关控制，
-        # 谁能触发由 AstrBot 管理面板「扩展 → 组件」中本工具的权限（管理员/成员）决定。
-        if event is not None and not event.is_private_chat() and not plugin.config.get("allow_group_query", False):
-            return "群聊中未开启日程查询，请私聊查询，或让管理员在插件设置中开启「在群聊中开放查询」。"
+        # 私聊维持开放；群聊由原有总开关或新增成员/群白名单独立放行。
+        if not _has_schedule_access(plugin, event):
+            return "当前群聊未开放日程查询，请私聊查询，或让管理员开启群聊查询、配置白名单。"
         keyword = str(kwargs.get("query") or "").strip()
         try:
             items, matched = await asyncio.to_thread(plugin.store.search, kwargs["start_date"], kwargs["end_date"], keyword, kwargs.get("limit", 20))
@@ -121,6 +142,47 @@ class QueryScheduleTool(FunctionTool[AstrAgentContext]):
         if keyword and not matched:
             payload["notice"] = f"关键词「{keyword}」未直接匹配任何记录的标题或关键词；以上为该日期范围内的全部候选记录，不得当作确定事实，需要时请向用户确认。"
         return json.dumps(payload, ensure_ascii=False)
+
+
+@dataclass
+class SendLookiImageTool(FunctionTool[AstrAgentContext]):
+    name: str = "send_looki_image"
+    description: str = ("按用户指定的日期和严格时段获取 Looki 图片，临时下载候选图，由多模态模型挑选 1 张后发送原图或图生图结果。用户想看某段时间的照片、将当时画面转成二次元或其他风格时使用。日期或起止时间不明确时先询问，不得猜测；只查该时段，无图时如实说明，不得扩展到当天其他时段。候选图只供模型内部挑选，最终只发送 1 张图。style_adjustment 仅用于本次风格调整。")
+    parameters: dict = Field(default_factory=lambda: {
+        "type": "object",
+        "properties": {
+            "date": {"type": "string", "description": "图片所属日期 YYYY-MM-DD"},
+            "start_time": {"type": "string", "description": "时段开始时间 HH:MM 或 HH:MM:SS"},
+            "end_time": {"type": "string", "description": "时段结束时间 HH:MM 或 HH:MM:SS，必须晚于开始时间"},
+            "preference": {"type": "string", "description": "可选选图偏好，例如偏好人像、食物或清晰全景"},
+            "style_adjustment": {"type": "string", "description": "可选的本次图生图风格调整；原图模式下不生效"},
+        },
+        "required": ["date", "start_time", "end_time"],
+    })
+
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> ToolExecResult:
+        plugin = context.context.context.get_registered_star(PLUGIN_NAME)
+        if not plugin:
+            return "日程插件当前不可用。"
+        event = context.context.event
+        if event is None:
+            return "当前对话无法发送图片。"
+        if not _has_schedule_access(plugin, event):
+            return "当前群聊未开放日程图片查询，请私聊使用，或让管理员配置白名单。"
+        try:
+            return await plugin.image_service.send_period_image(
+                event,
+                str(kwargs["date"] or "").strip(),
+                str(kwargs["start_time"] or "").strip(),
+                str(kwargs["end_time"] or "").strip(),
+                str(kwargs.get("preference") or "").strip(),
+                str(kwargs.get("style_adjustment") or "").strip(),
+            )
+        except (ValueError, TypeError, KeyError) as exc:
+            return f"图片查询或生成参数无效：{exc}"
+        except Exception as exc:
+            logger.exception("[%s] 时段图片处理失败", PLUGIN_NAME)
+            return f"图片获取、挑选或生成失败：{str(exc)[:300]}"
 
 
 @dataclass
@@ -150,7 +212,7 @@ class AddScheduleCorrectionTool(FunctionTool[AstrAgentContext]):
         return json.dumps({"saved": True, "correction": correction}, ensure_ascii=False)
 
 
-@register(PLUGIN_NAME, AUTHOR, "Looki 日程同步、管理与 Bot 查阅，支持本地持久化、日历编辑和近期生活线索。", VERSION)
+@register(PLUGIN_NAME, AUTHOR, "Looki 日程同步、日历编辑、对话校正、白名单查阅，以及严格时段选图和图生图。", VERSION)
 class LookiCompanionPlugin(Star):
     def __init__(self, context: Context, config: dict[str, Any] | None = None):
         super().__init__(context)
@@ -163,7 +225,8 @@ class LookiCompanionPlugin(Star):
         base_url = str(self.config.get("looki_base_url") or DEFAULT_LOOKI_BASE_URL).strip()
         api_key = str(self.config.get("looki_api_key") or "").strip()
         self.schedule_provider = LookiScheduleProvider(base_url, api_key, int(self.config.get("request_timeout_seconds", 20))) if api_key else None
-        self.context.add_llm_tools(QueryScheduleTool(), AddScheduleCorrectionTool())
+        self.image_service = LookiImageService(self, data_dir)
+        self.context.add_llm_tools(QueryScheduleTool(), SendLookiImageTool(), AddScheduleCorrectionTool())
         routes = [
             ("/" + PLUGIN_NAME + "/events", self.api_events, ["GET"]),
             ("/" + PLUGIN_NAME + "/density", self.api_density, ["GET"]),
@@ -308,10 +371,23 @@ class LookiCompanionPlugin(Star):
     def _mask_key(key: str) -> str:
         return f"{key[:5]}••••{key[-4:]}" if len(key) > 12 else "••••••"
 
+    def _image_provider_ids(self) -> list[str]:
+        provider_ids = []
+        for provider in self.context.get_all_providers():
+            config = getattr(provider, "provider_config", {}) or {}
+            provider_id = str(config.get("id") or "").strip()
+            modalities = config.get("modalities")
+            if isinstance(modalities, (list, tuple, set)) and modalities and "image" not in modalities:
+                continue
+            if provider_id:
+                provider_ids.append(provider_id)
+        return provider_ids
+
     async def api_get_config(self):
         def str_field(name, default=""):
             return str(self.config.get(name, default) or default)
         key = str_field("looki_api_key")
+        image_key = str_field("image_api_key")
         reveal = request.query.get("reveal") == "1"
         return json_response({
             "looki_api_key": key if reveal else self._mask_key(key),
@@ -328,6 +404,20 @@ class LookiCompanionPlugin(Star):
             "store_raw_json": bool(self.config.get("store_raw_json", False)),
             "clue_days": int(self.config.get("clue_days", 7)),
             "max_clues": int(self.config.get("max_clues", 3)),
+            "whitelist_user_ids": str_field("whitelist_user_ids"),
+            "whitelist_group_ids": str_field("whitelist_group_ids"),
+            "image_candidate_count": int(self.config.get("image_candidate_count", 3)),
+            "image_send_original": bool(self.config.get("image_send_original", False)),
+            "image_style_prompt": str_field("image_style_prompt", DEFAULT_ANIME_PROMPT),
+            "image_selection_provider_id": str_field("image_selection_provider_id"),
+            "image_generation_mode": str_field("image_generation_mode", "multimodal"),
+            "image_generation_provider_id": str_field("image_generation_provider_id"),
+            "image_api_base_url": str_field("image_api_base_url"),
+            "image_api_model": str_field("image_api_model"),
+            "image_api_key": image_key if reveal else self._mask_key(image_key),
+            "image_api_key_masked": self._mask_key(image_key),
+            "has_image_api_key": bool(image_key),
+            "image_provider_ids": self._image_provider_ids(),
         })
 
     async def api_set_config(self):
@@ -340,15 +430,24 @@ class LookiCompanionPlugin(Star):
                 key = str(payload["looki_api_key"]).strip()
                 if key and "•" not in key:
                     updates["looki_api_key"] = key
+            if "image_api_key" in payload:
+                key = str(payload["image_api_key"]).strip()
+                if key and "•" not in key:
+                    updates["image_api_key"] = key
             if "looki_base_url" in payload:
                 url = str(payload["looki_base_url"]).strip().rstrip("/")
                 if url and not url.startswith("https://") and not url.startswith("http://"):
                     return error_response("接口地址必须以 http(s):// 开头", status_code=400)
                 updates["looki_base_url"] = url
+            if "image_api_base_url" in payload:
+                url = str(payload["image_api_base_url"]).strip().rstrip("/")
+                if url and not url.startswith(("https://", "http://")):
+                    return error_response("图生图接口地址必须以 http(s):// 开头", status_code=400)
+                updates["image_api_base_url"] = url
             if "timezone" in payload:
                 ZoneInfo(str(payload["timezone"]).strip())
                 updates["timezone"] = str(payload["timezone"]).strip()
-            for name, low, high in (("sync_interval_minutes", 1, 1440), ("backfill_days", 1, 366), ("request_timeout_seconds", 5, 120), ("clue_days", 1, 31), ("max_clues", 0, 10)):
+            for name, low, high in (("sync_interval_minutes", 1, 1440), ("backfill_days", 1, 366), ("request_timeout_seconds", 5, 120), ("clue_days", 1, 31), ("max_clues", 0, 10), ("image_candidate_count", 1, 9)):
                 if name in payload:
                     value = int(payload[name])
                     if not low <= value <= high:
@@ -359,7 +458,18 @@ class LookiCompanionPlugin(Star):
                 if scope not in CLUE_SCOPES:
                     raise ValueError(f"clue_scope 只能是 {' / '.join(CLUE_SCOPES)}")
                 updates["clue_scope"] = scope
-            for name in ("auto_sync", "allow_group_query", "store_raw_json"):
+            if "image_generation_mode" in payload:
+                mode = str(payload["image_generation_mode"]).strip()
+                if mode not in ("multimodal", "openai_compatible"):
+                    raise ValueError("image_generation_mode 配置无效")
+                updates["image_generation_mode"] = mode
+            for name in ("image_selection_provider_id", "image_generation_provider_id", "image_api_model", "image_style_prompt"):
+                if name in payload:
+                    updates[name] = str(payload[name]).strip()
+            for name in ("whitelist_user_ids", "whitelist_group_ids"):
+                if name in payload:
+                    updates[name] = "\n".join(sorted(_config_ids(payload[name])))
+            for name in ("auto_sync", "allow_group_query", "store_raw_json", "image_send_original"):
                 if name in payload:
                     updates[name] = bool(payload[name])
         except (ValueError, TypeError, KeyError) as exc:
