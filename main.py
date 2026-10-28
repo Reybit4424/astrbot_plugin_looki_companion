@@ -26,7 +26,7 @@ from .schedule_store import ScheduleStore
 
 PLUGIN_NAME = "astrbot_plugin_looki_companion"
 AUTHOR = "瑞贝特"
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 DEFAULT_LOOKI_BASE_URL = "https://open.looki.tech/api/v1"
 
 

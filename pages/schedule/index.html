@@ -84,6 +84,7 @@ button{cursor:pointer}
 .tl-tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);margin-top:9px}
 .tl-tag::before{content:"";width:4px;height:4px;border-radius:50%;background:#a9b6b0}
 .tl-desc{margin:4px 0 0;font-size:13px;color:#4a554f;line-height:1.75;white-space:pre-wrap}
+.tl-tag+.chips{margin-top:6px}
 .tl-audio{border-left:3px solid var(--clue-line);background:var(--clue-bg);border-radius:0 8px 8px 0;padding:8px 11px;margin-top:10px}
 .tl-audio-tag{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--clue-text);margin-bottom:4px}
 .tl-audio-tag::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--dot)}
@@ -346,18 +347,19 @@ function timelineItem(item){
   body.append(titleRow);
 
   if(item.keywords&&item.keywords.length){
+    const tag=document.createElement('div');tag.className='tl-tag';tag.textContent='关键词';
     const chips=document.createElement('div');chips.className='chips';
     for(const k of item.keywords){const c=document.createElement('i');c.textContent=k;chips.append(c)}
-    body.append(chips);
+    body.append(tag,chips);
   }
   if(item.description){
-    const tag=document.createElement('div');tag.className='tl-tag';tag.textContent='描述 · 仅作线索';
+    const tag=document.createElement('div');tag.className='tl-tag';tag.textContent='详细描述 · 仅作线索';
     const p=document.createElement('p');p.className='tl-desc';p.textContent=item.description;
     body.append(tag,p);
   }
   if(item.audio_summary){
     const box=document.createElement('div');box.className='tl-audio';
-    const tag=document.createElement('div');tag.className='tl-audio-tag';tag.textContent='录音摘要 · Looki 捕捉';
+    const tag=document.createElement('div');tag.className='tl-audio-tag';tag.textContent='音频摘要 · Looki 捕捉';
     const p=document.createElement('p');p.textContent=item.audio_summary;
     box.append(tag,p);body.append(box);
   }
