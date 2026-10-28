@@ -91,7 +91,7 @@
   },
   "image_generation_mode": {
     "type": "string",
-    "description": "图生图方式：multimodal 使用 AstrBot 多模态模型，openai_compatible 使用 OpenAI 兼容 /images/edits 接口。",
+    "description": "图生图方式：multimodal 使用 AstrBot 多模态模型，openai_compatible 使用兼容 /images/edits 或完整 /images/generations 接口。",
     "options": ["multimodal", "openai_compatible"],
     "default": "multimodal"
   },
@@ -102,7 +102,7 @@
   },
   "image_api_base_url": {
     "type": "string",
-    "description": "OpenAI 兼容图生图接口 Base URL，可填写到 /v1 或完整 /images/edits 地址。",
+    "description": "兼容图生图接口地址，可填写到 /v1、完整 /images/edits，或完整 /images/generations（参考图使用 base64 data URL）。",
     "default": ""
   },
   "image_api_model": {

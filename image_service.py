@@ -17,6 +17,7 @@ from astrbot.core.message.components import Image
 from astrbot.core.message.message_event_result import MessageChain
 
 DEFAULT_ANIME_PROMPT = "日系二次元插画风格，赛璐璐上色，线稿干净，配色柔和，画面干净通透，避免写实摄影质感与过度磨皮。"
+IMAGE_RETENTION_SECONDS = 3 * 24 * 60 * 60
 
 
 def _extract_items(payload: Any) -> list[Any]:
@@ -49,6 +50,20 @@ class LookiImageService:
         self.plugin = plugin
         self.temp_root = data_dir / "image_tmp"
         self.temp_root.mkdir(parents=True, exist_ok=True)
+        self._cleanup_expired()
+
+    def _cleanup_expired(self) -> None:
+        cutoff = datetime.now().timestamp() - IMAGE_RETENTION_SECONDS
+        for path in self.temp_root.iterdir():
+            try:
+                if path.stat().st_mtime >= cutoff:
+                    continue
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+            except FileNotFoundError:
+                pass
 
     async def send_period_image(
         self,
@@ -59,6 +74,7 @@ class LookiImageService:
         preference: str = "",
         style_adjustment: str = "",
     ) -> str:
+        await asyncio.to_thread(self._cleanup_expired)
         if len(preference) > 500 or len(style_adjustment) > 1000:
             raise ValueError("选图偏好或风格调整过长")
         timezone = str(self.plugin.config.get("timezone") or "Asia/Shanghai")
@@ -83,23 +99,20 @@ class LookiImageService:
             return "该时段没有可查询图片的 Looki 日程，未扩展到其他时段。"
 
         work = Path(tempfile.mkdtemp(prefix="period-", dir=self.temp_root))
-        try:
-            count = max(1, min(int(self.plugin.config.get("image_candidate_count", 3)), 9))
-            candidates = await self._download_candidates(matches, count, work)
-            if not candidates:
-                return "该时段没有可用图片，未扩展到其他时段。"
-            selected_index = await self._select_candidate(candidates, preference, event)
-            selected = candidates[selected_index]
-            if self.plugin.config.get("image_send_original", False):
-                output = selected["path"]
-                mode = "原图"
-            else:
-                output = await self._generate_image(selected["path"], work, style_adjustment, event)
-                mode = "图生图结果"
-            await event.send(MessageChain().file_image(str(output)))
-            return f"已从 {len(candidates)} 张候选图中选定第 {selected_index + 1} 张并发送{mode}；只发送了最终 1 张图片，请勿重复发图。"
-        finally:
-            await asyncio.to_thread(shutil.rmtree, work, True)
+        count = max(1, min(int(self.plugin.config.get("image_candidate_count", 3)), 9))
+        candidates = await self._download_candidates(matches, count, work)
+        if not candidates:
+            return "该时段没有可用图片，未扩展到其他时段。"
+        selected_index = await self._select_candidate(candidates, preference, event)
+        selected = candidates[selected_index]
+        if self.plugin.config.get("image_send_original", False):
+            output = selected["path"]
+            mode = "原图"
+        else:
+            output = await self._generate_image(selected["path"], work, style_adjustment, event)
+            mode = "图生图结果"
+        await event.send(MessageChain().file_image(str(output)))
+        return f"已从 {len(candidates)} 张候选图中选定第 {selected_index + 1} 张并发送{mode}；只发送了最终 1 张图片，请勿重复发图。"
 
     async def _download_candidates(self, matches: list[dict[str, Any]], limit: int, work: Path) -> list[dict[str, Any]]:
         provider = self.plugin.schedule_provider
@@ -133,7 +146,7 @@ class LookiImageService:
             return ""
         file_obj = raw.get("file") if isinstance(raw.get("file"), dict) else raw
         for obj in (file_obj, raw):
-            kind = str(obj.get("mime_type") or obj.get("content_type") or obj.get("file_type") or "").lower()
+            kind = str(obj.get("media_type") or obj.get("mime_type") or obj.get("content_type") or obj.get("file_type") or "").lower()
             if ("/" in kind and not kind.startswith("image/")) or kind.startswith(("audio", "video")):
                 return ""
         for key in ("temporary_url", "url", "signed_url", "download_url"):
@@ -225,17 +238,29 @@ class LookiImageService:
         key = str(self.plugin.config.get("image_api_key") or "").strip()
         if not base or not model:
             raise ValueError("请填写兼容图生图接口地址和模型名称")
-        endpoint = base if base.endswith("/images/edits") else f"{base}/images/edits"
         headers = {"Authorization": f"Bearer {key}"} if key else {}
         data = await asyncio.to_thread(reference.read_bytes)
         mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}.get(reference.suffix.lower(), "image/png")
         async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
-            response = await client.post(
-                endpoint,
-                headers=headers,
-                data={"model": model, "prompt": prompt},
-                files={"image": (reference.name, data, mime)},
-            )
+            if base.endswith("/images/generations"):
+                response = await client.post(
+                    base,
+                    headers=headers,
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "image": f"data:{mime};base64," + base64.b64encode(data).decode("ascii"),
+                        "watermark": False,
+                    },
+                )
+            else:
+                endpoint = base if base.endswith("/images/edits") else f"{base}/images/edits"
+                response = await client.post(
+                    endpoint,
+                    headers=headers,
+                    data={"model": model, "prompt": prompt},
+                    files={"image": (reference.name, data, mime)},
+                )
             response.raise_for_status()
             payload = response.json()
             rows = payload.get("data") if isinstance(payload, dict) else None

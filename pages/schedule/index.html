@@ -231,10 +231,10 @@ dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
     <h3>图片与模型</h3>
     <label>候选图片数量<input id="cfgImageCount" type="number" min="1" max="9"></label>
     <label>挑图多模态模型<select id="cfgSelectionProvider"><option value="">跟随当前对话模型</option></select></label>
-    <label>图生图方式<select id="cfgGenerationMode"><option value="multimodal">AstrBot 多模态模型</option><option value="openai_compatible">OpenAI 兼容 /images/edits</option></select></label>
+    <label>图生图方式<select id="cfgGenerationMode"><option value="multimodal">AstrBot 多模态模型</option><option value="openai_compatible">兼容图生图接口</option></select></label>
     <label>图生图多模态模型<select id="cfgGenerationProvider"><option value="">跟随挑图模型</option></select></label>
     <label class="full">默认图生图风格<textarea id="cfgImageStyle" rows="3"></textarea></label>
-    <label class="full">兼容图生图接口地址<input id="cfgImageApiUrl" placeholder="https://example.com/v1"></label>
+    <label class="full">兼容图生图接口地址<input id="cfgImageApiUrl" placeholder="/v1、完整 /images/edits 或 /images/generations"></label>
     <label>兼容图生图模型<input id="cfgImageApiModel" placeholder="模型名称"></label>
     <label>兼容接口 API Key<input id="cfgImageApiKey" type="password" autocomplete="off"></label>
   </div>

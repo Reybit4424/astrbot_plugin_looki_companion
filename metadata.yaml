@@ -20,20 +20,4 @@ keywords:
   - whitelist
 support_platforms:
   - aiocqhttp
-  - qq_official
-  - qq_official_webhook
-  - telegram
-  - discord
-  - wecom
-  - wecom_ai_bot
-  - lark
-  - dingtalk
-  - slack
-  - kook
-  - vocechat
-  - satori
-  - misskey
-  - line
-  - matrix
-  - mattermost
 

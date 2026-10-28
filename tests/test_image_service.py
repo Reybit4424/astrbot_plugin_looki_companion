@@ -1,14 +1,17 @@
 import asyncio
 import base64
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.message.components import Image
-from astrbot_plugin_looki_companion.image_service import LookiImageService
-from astrbot_plugin_looki_companion.main import _has_schedule_access
+from astrbot_plugin_looki_companion.image_service import IMAGE_RETENTION_SECONDS, LookiImageService
+from astrbot_plugin_looki_companion.main import SendLookiImageTool, _has_schedule_access
 
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"test-image"
@@ -69,7 +72,7 @@ class ImageServiceTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_original_mode_selects_one_and_cleans_temp_dir(self):
+    def test_original_mode_selects_one_and_retains_temp_dir(self):
         captured = {}
 
         async def download(matches, limit, work):
@@ -95,8 +98,9 @@ class ImageServiceTests(unittest.TestCase):
         self.service._generate_image.assert_not_awaited()
         current_event.send.assert_awaited_once()
         self.assertIn("只发送了最终 1 张图片", result)
-        self.assertFalse(captured["work"].exists())
-        self.assertEqual(list(self.service.temp_root.iterdir()), [])
+        self.assertTrue(captured["work"].exists())
+        self.assertEqual(len(list(captured["work"].glob("candidate_*.png"))), 2)
+        self.assertEqual(list(self.service.temp_root.iterdir()), [captured["work"]])
 
     def test_outside_period_does_not_expand_or_download(self):
         self.service._download_candidates = AsyncMock()
@@ -106,6 +110,12 @@ class ImageServiceTests(unittest.TestCase):
         self.assertIn("未扩展到其他时段", result)
         self.service._download_candidates.assert_not_awaited()
         self.assertEqual(list(self.service.temp_root.iterdir()), [])
+
+    def test_file_url_accepts_images_and_rejects_video(self):
+        image = {"file": {"media_type": "IMAGE", "temporary_url": "https://looki.test/image"}}
+        video = {"file": {"media_type": "VIDEO", "temporary_url": "https://looki.test/video"}}
+        self.assertEqual(self.service._file_image_url(image), "https://looki.test/image")
+        self.assertEqual(self.service._file_image_url(video), "")
 
     def test_selection_uses_all_candidates_and_rejects_invalid_number(self):
         candidates = [
@@ -123,7 +133,7 @@ class ImageServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "有效的候选编号"):
             asyncio.run(self.service._select_candidate(candidates, "", event(private=True)))
 
-    def test_selection_failure_still_cleans_temp_dir(self):
+    def test_selection_failure_still_retains_temp_dir(self):
         captured = {}
 
         async def download(matches, limit, work):
@@ -138,7 +148,50 @@ class ImageServiceTests(unittest.TestCase):
             asyncio.run(self.service.send_period_image(
                 event(private=True), "2026-10-27", "10:00", "11:00"
             ))
-        self.assertFalse(captured["work"].exists())
+        self.assertTrue(captured["work"].exists())
+        self.assertTrue((captured["work"] / "candidate.png").exists())
+
+    def test_expired_images_clean_on_start_and_call(self):
+        expired = self.service.temp_root / "period-expired"
+        recent = self.service.temp_root / "period-recent"
+        for directory in (expired, recent):
+            directory.mkdir()
+            (directory / "candidate.png").write_bytes(PNG)
+        old = time.time() - IMAGE_RETENTION_SECONDS - 60
+        os.utime(expired, (old, old))
+
+        LookiImageService(self.plugin, self.root)
+        self.assertFalse(expired.exists())
+        self.assertTrue(recent.exists())
+
+        expired_on_call = self.service.temp_root / "period-expired-on-call"
+        expired_on_call.mkdir()
+        (expired_on_call / "candidate.png").write_bytes(PNG)
+        os.utime(expired_on_call, (old, old))
+        result = asyncio.run(self.service.send_period_image(
+            event(private=True), "2026-10-27", "14:00", "15:00"
+        ))
+        self.assertIn("未扩展到其他时段", result)
+        self.assertFalse(expired_on_call.exists())
+        self.assertTrue(recent.exists())
+
+    def test_image_tool_unwraps_star_metadata(self):
+        image_service = SimpleNamespace(send_period_image=AsyncMock(return_value="已发送"))
+        plugin = SimpleNamespace(config={"allow_group_query": False}, image_service=image_service)
+        registry = SimpleNamespace(
+            get_registered_star=lambda _: SimpleNamespace(star_cls=plugin)
+        )
+        current_event = event(private=True)
+        context = ContextWrapper(context=SimpleNamespace(context=registry, event=current_event))
+
+        result = asyncio.run(SendLookiImageTool().call(
+            context, date="2026-10-27", start_time="10:00", end_time="11:00"
+        ))
+
+        self.assertEqual(result, "已发送")
+        image_service.send_period_image.assert_awaited_once_with(
+            current_event, "2026-10-27", "10:00", "11:00", "", ""
+        )
 
     def test_multimodal_generation_uses_reference_and_returns_image(self):
         reference = self.root / "reference.png"
@@ -203,6 +256,52 @@ class ImageServiceTests(unittest.TestCase):
         self.assertEqual(call.kwargs["data"]["model"], "edit-model")
         self.assertIn("image", call.kwargs["files"])
         self.assertNotIn("image[]", call.kwargs["files"])
+
+    def test_generations_generation_uses_data_url_and_downloads_result(self):
+        reference = self.root / "reference.jpg"
+        reference.write_bytes(JPEG)
+        work = self.root / "work"
+        work.mkdir()
+        self.plugin.config.update({
+            "image_api_base_url": "https://image.test/api/plan/v3/images/generations",
+            "image_api_model": "seedream-model",
+            "image_api_key": "secret",
+        })
+
+        class Response:
+            def __init__(self, content=b"", payload=None):
+                self.content = content
+                self.payload = payload
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self.payload
+
+        class Client:
+            instance = None
+
+            def __init__(self, **kwargs):
+                self.post = AsyncMock(return_value=Response(payload={"data": [{"url": "https://image.test/generated.jpg"}]}))
+                self.get = AsyncMock(return_value=Response(content=JPEG))
+                Client.instance = self
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+        with patch("astrbot_plugin_looki_companion.image_service.httpx.AsyncClient", Client):
+            output = asyncio.run(self.service._generate_with_api(reference, work, "prompt"))
+        self.assertEqual(output.read_bytes(), JPEG)
+        call = Client.instance.post.await_args
+        self.assertEqual(call.args[0], "https://image.test/api/plan/v3/images/generations")
+        self.assertEqual(call.kwargs["json"]["model"], "seedream-model")
+        self.assertTrue(call.kwargs["json"]["image"].startswith("data:image/jpeg;base64,"))
+        self.assertFalse(call.kwargs["json"]["watermark"])
+        Client.instance.get.assert_awaited_once_with("https://image.test/generated.jpg")
 
 
 class WhitelistTests(unittest.TestCase):

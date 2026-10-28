@@ -240,7 +240,9 @@ class ScheduleStoreTests(unittest.TestCase):
 
         self.store.upsert_remote([self.item(description="用户在宿舍")])
         plugin = SimpleNamespace(store=self.store, config={"allow_group_query": False})
-        registry = SimpleNamespace(get_registered_star=lambda _: plugin)
+        registry = SimpleNamespace(
+            get_registered_star=lambda _: SimpleNamespace(star_cls=plugin)
+        )
 
         def context(admin):
             event = SimpleNamespace(is_admin=lambda: admin, is_private_chat=lambda: True)

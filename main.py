@@ -54,6 +54,11 @@ def _has_schedule_access(plugin: Any, event: Any) -> bool:
     return bool(plugin.config.get("allow_group_query", False))
 
 
+def _get_plugin(context: Context) -> Any:
+    metadata = context.get_registered_star(PLUGIN_NAME)
+    return metadata.star_cls if metadata else None
+
+
 class LookiScheduleProvider:
     def __init__(self, base_url: str, api_key: str, timeout: int = 20):
         self.base_url = base_url.rstrip("/")
@@ -121,7 +126,7 @@ class QueryScheduleTool(FunctionTool[AstrAgentContext]):
     })
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> ToolExecResult:
-        plugin = context.context.context.get_registered_star(PLUGIN_NAME)
+        plugin = _get_plugin(context.context.context)
         if not plugin:
             return "没有日程记录。"
         event = context.context.event
@@ -161,7 +166,7 @@ class SendLookiImageTool(FunctionTool[AstrAgentContext]):
     })
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> ToolExecResult:
-        plugin = context.context.context.get_registered_star(PLUGIN_NAME)
+        plugin = _get_plugin(context.context.context)
         if not plugin:
             return "日程插件当前不可用。"
         event = context.context.event
@@ -202,7 +207,7 @@ class AddScheduleCorrectionTool(FunctionTool[AstrAgentContext]):
         event = context.context.event
         if event is None or not event.is_admin():
             return "只有 AstrBot 管理员可以添加对话校正。"
-        plugin = context.context.context.get_registered_star(PLUGIN_NAME)
+        plugin = _get_plugin(context.context.context)
         if not plugin:
             return "日程插件当前不可用。"
         try:

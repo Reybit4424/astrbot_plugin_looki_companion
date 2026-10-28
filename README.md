@@ -43,7 +43,7 @@
 - **独立白名单**：白名单成员可在私聊和任意群聊查询日程、使用图片功能；白名单群中的所有成员均可在该群使用，无需开启群聊总开关。
 - **对话校正**：Bot 可根据管理员对话追加校正注记，保留多条历史；原始 Looki 内容不变，后续查询以最新注记为准。
 - **近期线索注入**：可选在管理员（`admins_id`）的对话上下文中注入压缩后的近期生活线索与对话校正，私聊与群聊均生效；非管理员不注入。
-- **隐私友好**：原始 JSON 默认不落库，任何接口都不返回该字段；候选图和生成图只临时保存，发送结束或失败后自动清理。
+- **隐私友好**：原始 JSON 默认不落库，任何接口都不返回该字段；候选图和生成图在本地保留 3 天，插件启动及每次图片调用时自动清理过期文件。
 
 ## 界面布局
 
@@ -82,7 +82,7 @@
 3. 打开插件配置，填写 `looki_api_key`（Looki 开放 API Key，请求头为 `x-api-key`）。
 4. 保持 `auto_sync` 开启即可；也可以到插件页面点「立即同步」。
 5. 打开插件页面确认数据已落库。
-6. 如需图片功能，选择支持图像输入的挑图模型；图生图可继续选择多模态模型，或填写 OpenAI 兼容 `/images/edits` 接口。只要原图时开启「直接发送原图」，无需配置图生图模型。
+6. 如需图片功能，选择支持图像输入的挑图模型；图生图可继续选择多模态模型，或填写兼容 `/images/edits`、完整 `/images/generations` 接口。火山 Seedream 图生图需填写完整 generations 地址。只发原图时开启「直接发送原图」，无需配置图生图模型。
 
 依赖仅两项，安装时 AstrBot 会自动处理：
 
@@ -115,7 +115,7 @@ pydantic>=2.0.0
 | `image_selection_provider_id` | string | 空 | 挑图多模态 Provider ID；留空使用当前对话模型。 |
 | `image_generation_mode` | string | `multimodal` | `multimodal` 使用多模态模型；`openai_compatible` 使用兼容图生图接口。 |
 | `image_generation_provider_id` | string | 空 | 多模态图生图 Provider ID，须支持图像输入与图片输出；留空使用挑图模型。 |
-| `image_api_base_url` | string | 空 | 兼容接口 Base URL，可填写到 `/v1` 或完整 `/images/edits`。 |
+| `image_api_base_url` | string | 空 | 兼容接口地址，可填写到 `/v1`、完整 `/images/edits` 或完整 `/images/generations`；后者以 base64 data URL 传参考图，适用于火山 Seedream。 |
 | `image_api_model` | string | 空 | 兼容接口的图生图模型名称。 |
 | `image_api_key` | string | 空 | 兼容接口 API Key；留空则不发送 Authorization 头。 |
 
@@ -155,7 +155,7 @@ pydantic>=2.0.0
 - 默认临时下载 3 张有效候选图（可配置 1–9 张），全部交给挑图多模态模型，模型只返回一个有效候选编号。
 - 候选图不会直接发给用户。无论原图模式还是图生图模式，最终都只发送选中的 1 张。
 - 默认图生图提示词为日系二次元插画风格，可在设置中修改，也可通过 `style_adjustment` 单次调整。
-- 多模态图生图使用 AstrBot Provider；专用图生图使用 OpenAI 兼容 `/images/edits`，参考图以单图字段 `image` 上传，支持返回 `b64_json` 或 `url`。
+- 多模态图生图使用 AstrBot Provider；兼容接口支持 `/images/edits`（multipart 单图字段 `image`）和完整 `/images/generations`（JSON base64 data URL，火山 Seedream 适用），两种接口均支持返回 `b64_json` 或 `url`。
 - 挑图结果无效、图生图未返回图片等情况会明确报错，不会随机选图，也不会静默退化为纯文生图。
 
 ### 对话校正
@@ -202,7 +202,7 @@ pydantic>=2.0.0
 - `raw_json` 默认不写入，开启后也只在本地数据库中，任何 Web API 都不返回该字段。
 - WebUI 读写 API 通过 AstrBot 插件页面的认证 bridge 调用，匿名请求返回 401。
 - 线索注入只对 AstrBot 管理员生效，覆盖其私聊与群聊会话；非管理员不注入。白名单只放开日程读取与图片工具，不开放校正写入或线索注入。
-- 图片不写入 SQLite，临时下载地址也不长期保存。每次调用使用独立临时目录，发送完成或失败后自动删除候选图和生成图。
+- 图片不写入 SQLite，临时下载地址也不长期保存。每次调用使用独立临时目录，候选图和生成图固定保留 3 天；插件启动及每次图片调用时自动删除过期文件。
 - 使用多模态挑图或图生图时，候选图 / 参考图会发送给你配置的模型服务；使用第三方兼容接口时，参考图和提示词也会发送到该服务。请按对应服务的隐私政策选择模型。
 - 其他插件可在兼容的 AstrBot 进程中导入公开的 `ScheduleStore` 类读取本地日程。
 
@@ -242,7 +242,7 @@ set PYTHONPATH=<插件父目录>;<插件目录>;<AstrBot 目录>
 python -m unittest discover -s tests -v
 ```
 
-当前共 26 个用例，覆盖：
+当前共 30 个用例，覆盖：
 
 - 请求头与字段映射、远端 upsert 幂等、用户编辑保护、手工记录保留
 - 时区与日期范围校验、关键词降级与空结果、线索不推断睡眠
@@ -250,9 +250,9 @@ python -m unittest discover -s tests -v
 - 多条对话校正历史、管理员写入权限、同步后保留及原始字段不变
 - 私聊、群聊总开关、成员白名单和群白名单的日程 / 图片访问权限
 - 严格时段相交与无图不扩展、候选数量、全部候选图传入多模态模型
-- 原图模式仍先挑图、最终只发送 1 张，以及成功和失败后的临时目录清理
+- 原图模式仍先挑图、最终只发送 1 张，成功和失败后均保留图片，以及 3 天过期清理
 - 多模态图生图参考图、Provider、默认风格与单次调整
-- OpenAI 兼容 `/images/edits` 的单图字段和返回图片处理
+- 兼容 `/images/edits` 的单图字段，以及 `/images/generations` 的 base64 参考图和返回图片下载
 - 无效候选编号与模型失败路径
 
 ## 目录结构
@@ -260,7 +260,7 @@ python -m unittest discover -s tests -v
 ```
 astrbot_plugin_looki_companion/
 ├── main.py                  # 插件入口：同步调度、Web API、LLM 工具、白名单、线索注入
-├── image_service.py         # 严格时段选图、临时下载、模型挑图、图生图与发送清理
+├── image_service.py         # 严格时段选图、临时下载、模型挑图、图生图与过期清理
 ├── schedule_store.py        # SQLite 存储层：schema、去重、搜索、线索
 ├── _conf_schema.json        # 配置项定义
 ├── metadata.yaml            # 插件元信息
@@ -279,7 +279,7 @@ astrbot_plugin_looki_companion/
 - 线索注入使用 `on_llm_request` 与 `ProviderRequest.extra_user_content_parts`。
 - 页面使用插件 Pages 与 `context.register_web_api()`，仅通过页面 bridge 的 GET / POST 交互。
 - 已在本地 AstrBot 4.26.4 完成部署验证：插件加载、自动同步、手动同步幂等、页面资产与 bridge 协议、扩展 API 认证（匿名 401）、参数校验（400）、路由匹配（404）、增删改全生命周期（含删除后同步不复活）、config 保存回路、月度聚合接口。
-- 0.7.0 已在服务器完成只读部署核验：插件启用、三项 LLM 工具注册、新增配置字段与密钥掩码正常，启动日志无 Traceback；真实 Looki 图片下载、多模态挑图和图生图链路由本地 mock 测试覆盖，未进行付费端到端调用。
+- 0.7.0 已在服务器 AstrBot 4.29.3 完成部署与真实链路验证：插件启用、三项 LLM 工具注册、新增配置字段与密钥掩码正常；真实 Looki JPG 下载、多模态挑图和火山 Seedream `/images/generations` 图生图均已分别验证，最终只发送 1 张图片。验证时拦截了实际聊天发送，测试图片未进入真实会话。
 - 未在其他最低版本逐一运行验证。
 
 ## 更新日志
@@ -288,10 +288,12 @@ astrbot_plugin_looki_companion/
 
 - 新增 `send_looki_image`：按指定日期和严格时段获取 Looki 图片，默认临时下载 3 张候选图，由多模态模型选择 1 张后发送。
 - 支持原图直发与图生图两种模式；默认二次元风格，可修改默认提示词或单次追加风格调整，两种模式最终都只发送 1 张图片。
-- 支持分别配置挑图与图生图多模态 Provider，也可使用 OpenAI 兼容 `/images/edits` 图生图接口。
+- 支持分别配置挑图与图生图多模态 Provider，也可使用兼容 `/images/edits` 或完整 `/images/generations` 图生图接口；后者支持火山 Seedream 的 base64 参考图。
 - 新增成员白名单与群白名单，独立放行日程查询和图片功能，不受 `allow_group_query` 总开关限制；对话校正与近期线索仍仅面向管理员。
-- 候选图仅在调用期间临时保存，成功或失败后自动清理；指定时段无图时不会扩展到其他时段。
-- 设置页新增白名单、候选图数量、原图开关、风格提示词和双模型 / 兼容接口配置；测试增至 26 项。
+- 候选图与生成图固定保留 3 天，插件启动及每次图片调用时自动清理过期文件；指定时段无图时不会扩展到其他时段。
+- 设置页新增白名单、候选图数量、原图开关、风格提示词和双模型 / 兼容接口配置；测试增至 30 项。
+- 修复 LLM 工具误将 `StarMetadata` 当作插件实例的问题，日程查询、图片和对话校正统一读取实际运行实例。
+- 按 Looki 返回的 `media_type` 前置过滤视频和音频，避免把 MP4 等大文件作为候选照片下载。
 
 ### 0.6.0
 
