@@ -1,109 +1,65 @@
 {
-  "mcp_origin_secret": {
+  "looki_api_key": {
     "type": "string",
-    "description": "MCP Origin Secret",
-    "hint": "在 Looki 开放平台申请，将通过 x-origin-secret 请求头发送。",
-    "obvious_hint": true,
-    "default": "",
-    "invisible": true
+    "description": "Looki 开放 API Key（请求使用 x-api-key 头）。"
   },
-  "mcp_url": {
+  "looki_base_url": {
     "type": "string",
-    "description": "MCP 服务地址",
-    "hint": "默认无需修改。",
-    "default": "http://172.17.0.1:3456/mcp"
+    "description": "Looki API Base URL。",
+    "default": "https://open.looki.tech/api/v1"
   },
-  "enable_realtime": {
+  "auto_sync": {
     "type": "bool",
-    "description": "是否启用实时事件查询",
-    "hint": "关闭后不会调用 /realtime/latest-event，会退回最近 moments 推断场景。",
+    "description": "启用 Looki Moments 结构化时间片段的后台同步。",
     "default": true
   },
-  "enable_in_group_chat": {
+  "sync_interval_minutes": {
+    "type": "int",
+    "description": "自动同步间隔（分钟），最小 1 分钟。",
+    "default": 5
+  },
+  "backfill_days": {
+    "type": "int",
+    "description": "每次同步向前回填天数。",
+    "default": 7
+  },
+  "request_timeout_seconds": {
+    "type": "int",
+    "description": "Looki 请求超时秒数。",
+    "default": 20
+  },
+  "timezone": {
+    "type": "string",
+    "description": "日程展示与同步使用的 IANA 时区。",
+    "default": "Asia/Shanghai"
+  },
+  "owner_id": {
+    "type": "string",
+    "description": "接收私聊近期线索注入的发送者 ID；留空时关闭线索注入。查询工具不再受此字段限制。"
+  },
+  "allow_group_query": {
     "type": "bool",
-    "description": "群聊中是否允许使用 Looki",
-    "hint": "关闭后，所有群聊都不会触发 Looki 查询，仅私聊可用。",
+    "description": "允许在群聊中使用日程查询工具（默认关闭）。群里谁能触发由 AstrBot 管理面板「扩展 → 组件」中 query_looki_schedule 工具的权限（管理员/成员）控制。",
     "default": false
   },
-  "admin_only": {
+  "store_raw_json": {
     "type": "bool",
-    "description": "是否仅管理员/主人可触发 Looki 查询",
-    "hint": "开启后，群聊和私聊里都只有管理员身份才允许触发 Looki 工具。",
-    "default": true
-  },
-  "request_timeout": {
-    "type": "int",
-    "description": "请求超时秒数",
-    "hint": "单次 HTTP 请求总超时。",
-    "default": 30
-  },
-  "recent_experience_window_minutes": {
-    "type": "int",
-    "description": "最近经历默认回看窗口（分钟）",
-    "hint": "looki_get_recent_experience 在未传 minutes 时使用，最大 720。",
-    "default": 120
-  },
-  "realtime_cache_seconds": {
-    "type": "int",
-    "description": "实时事件短缓存秒数",
-    "hint": "减少同一轮或短时间内的重复查询。",
-    "default": 15
-  },
-  "moment_summary_max_chars": {
-    "type": "int",
-    "description": "moment 描述最大字符数",
-    "hint": "用于裁剪详情描述，减少 LLM token 消耗。",
-    "default": 220
-  },
-  "enable_image_captioning": {
-    "type": "bool",
-    "description": "是否启用图片转文字",
-    "hint": "开启后会先把 Looki 图片转成简短文字描述，再整合进共同经历摘要。",
+    "description": "保存 Looki 远端原始响应到本地 raw_json 字段（默认关闭，避免落库个人隐私原文；任何接口都不返回该字段）。",
     "default": false
   },
-  "caption_model": {
-    "type": "string",
-    "description": "视觉模型名称",
-    "hint": "例如 Qwen/Qwen2-VL-7B-Instruct。留空则不启用自定义视觉模型。",
-    "default": ""
-  },
-  "caption_provider_id": {
-    "type": "string",
-    "description": "AstrBot 视觉 Provider ID",
-    "hint": "可选一个 AstrBot 已配置的视觉/多模态 Provider。留空则自动回退到 AstrBot 默认图片描述 Provider，再回退当前聊天 Provider。",
-    "default": "",
-    "_special": "select_provider"
-  },
-  "caption_api_base": {
-    "type": "string",
-    "description": "视觉模型 API Base URL",
-    "hint": "默认使用硅基流动兼容地址。",
-    "default": "https://api.siliconflow.cn/v1"
-  },
-  "caption_api_key": {
-    "type": "string",
-    "description": "视觉模型 API Key",
-    "hint": "仅在启用自定义视觉模型时需要填写。",
-    "default": "",
-    "obvious_hint": true,
-    "invisible": true
-  },
-  "enable_debug_logging": {
+  "inject_clues": {
     "type": "bool",
-    "description": "是否启用调试日志",
-    "hint": "记录请求路径和错误信息，但不会打印 API Key。",
-    "default": false
-  },
-  "inject_routing_hint": {
-    "type": "bool",
-    "description": "是否向 Agent 注入 Looki 工具路由提示",
-    "hint": "帮助模型在最近经历、当前场景和 12 小时内回忆时优先调用 Looki 工具。",
+    "description": "在 owner 私聊的对话上下文中注入压缩的近期生活线索。",
     "default": true
   },
-  "inject_companion_state": {
-    "type": "bool",
-    "description": "是否注入隐性陪伴态提示",
-    "hint": "开启后默认走智能触发：只有消息看起来和当前共同处境有关时才注入一小段中文背景；关闭后响应通常更快、token 消耗更低。",
-    "default": true
+  "clue_days": {
+    "type": "int",
+    "description": "近期线索回看天数，最大 31 天。",
+    "default": 7
+  },
+  "max_clues": {
+    "type": "int",
+    "description": "最多注入的线索条数，最大 10 条。",
+    "default": 3
   }
 }
