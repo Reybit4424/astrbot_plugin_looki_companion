@@ -141,10 +141,10 @@ button{cursor:pointer}
 .check input{width:auto;margin-top:3px}
 .check small{display:block;color:var(--muted);font-size:11.5px;line-height:1.6}
 .settings .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
-input[type=text],input[type=password],input[type=number],input[type=date],input[type=datetime-local],textarea{
+input[type=text],input[type=password],input[type=number],input[type=date],input[type=datetime-local],select,textarea{
   padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);width:100%;
 }
-input:focus,textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
 .keyrow{display:flex;gap:6px}
 .keyrow input{flex:1}
 
@@ -218,11 +218,10 @@ dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
     <label>请求超时（秒）<input id="cfgTimeout" type="number" min="5" max="120"></label>
     <label>线索天数<input id="cfgClueDays" type="number" min="1" max="31"></label>
     <label>线索条数上限<input id="cfgMaxClues" type="number" min="0" max="10"></label>
-    <label class="full">Owner QQ（仅用于私聊线索注入）<input id="cfgOwner"></label>
+    <label>线索注入范围<select id="cfgScope"><option>仅对管理成员开放</option><option>关闭</option></select></label>
   </div>
   <div class="checks">
     <label class="check"><input id="cfgAuto" type="checkbox"><span>自动后台同步<small>插件启动后立即同步一次，此后按间隔轮询</small></span></label>
-    <label class="check"><input id="cfgInject" type="checkbox"><span>私聊注入近期线索<small>仅对 Owner 生效，群聊不注入</small></span></label>
     <label class="check"><input id="cfgGroup" type="checkbox"><span>在群聊中开放查询<small>默认关闭；群里谁能用由 AstrBot 工具权限控制</small></span></label>
     <label class="check"><input id="cfgRaw" type="checkbox"><span>保存远端原始 JSON<small>含隐私原文，默认关闭，仅供调试</small></span></label>
   </div>
@@ -470,11 +469,11 @@ async function loadConfig(){
   let c={};try{c=await bridge.apiGet('config')}catch(e){}
   keyRevealed=false;$('cfgKey').type='password';$('cfgKey').value=c.looki_api_key_masked||'';
   $('cfgUrl').value=c.looki_base_url||'';
-  $('cfgAuto').checked=!!c.auto_sync;$('cfgInject').checked=!!c.inject_clues;
+  $('cfgAuto').checked=!!c.auto_sync;$('cfgScope').value=c.clue_scope||'仅对管理成员开放';
   $('cfgGroup').checked=!!c.allow_group_query;$('cfgRaw').checked=!!c.store_raw_json;
   $('cfgInterval').value=c.sync_interval_minutes;$('cfgBackfill').value=c.backfill_days;
   $('cfgTz').value=c.timezone;$('cfgTimeout').value=c.request_timeout_seconds;
-  $('cfgClueDays').value=c.clue_days;$('cfgMaxClues').value=c.max_clues;$('cfgOwner').value=c.owner_id||'';
+  $('cfgClueDays').value=c.clue_days;$('cfgMaxClues').value=c.max_clues;
 }
 $('eye').onclick=async()=>{
   keyRevealed=!keyRevealed;
@@ -490,11 +489,11 @@ $('cfgCancel').onclick=async()=>{await loadConfig();switchTab(false)};
 $('cfgSave').onclick=async()=>{
   const body={
     looki_api_key:$('cfgKey').value.trim(),looki_base_url:$('cfgUrl').value.trim(),
-    auto_sync:$('cfgAuto').checked,inject_clues:$('cfgInject').checked,
+    auto_sync:$('cfgAuto').checked,clue_scope:$('cfgScope').value,
     allow_group_query:$('cfgGroup').checked,store_raw_json:$('cfgRaw').checked,
     sync_interval_minutes:+$('cfgInterval').value,backfill_days:+$('cfgBackfill').value,
     timezone:$('cfgTz').value.trim(),request_timeout_seconds:+$('cfgTimeout').value,
-    clue_days:+$('cfgClueDays').value,max_clues:+$('cfgMaxClues').value,owner_id:$('cfgOwner').value.trim(),
+    clue_days:+$('cfgClueDays').value,max_clues:+$('cfgMaxClues').value,
   };
   try{await bridge.apiPost('config',body);await loadConfig();await status();switchTab(false)}
   catch(err){alert('保存失败：'+(err?.message||err))}

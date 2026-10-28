@@ -26,8 +26,10 @@ from .schedule_store import ScheduleStore
 
 PLUGIN_NAME = "astrbot_plugin_looki_companion"
 AUTHOR = "瑞贝特"
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 DEFAULT_LOOKI_BASE_URL = "https://open.looki.tech/api/v1"
+CLUE_SCOPE_ADMIN = "仅对管理成员开放"
+CLUE_SCOPES = (CLUE_SCOPE_ADMIN, "关闭")
 
 
 class LookiScheduleProvider:
@@ -202,13 +204,11 @@ class LookiCompanionPlugin(Star):
                 await asyncio.to_thread(self.store.set_meta, "last_error", str(exc)[:500])
                 return {"error": str(exc)}
 
-    def _is_owner(self, sender_id: Any) -> bool:
-        owner_id = str(self.config.get("owner_id", "")).strip()
-        return bool(owner_id) and str(sender_id) == owner_id
-
     @filter.on_llm_request()
     async def add_schedule_clues(self, event: AstrMessageEvent, req: ProviderRequest):
-        if not event.is_private_chat() or not self._is_owner(event.get_sender_id()) or not self.config.get("inject_clues", True):
+        if not event.is_private_chat() or not event.is_admin():
+            return
+        if str(self.config.get("clue_scope") or CLUE_SCOPE_ADMIN).strip() != CLUE_SCOPE_ADMIN:
             return
         try:
             timezone = str(self.config.get("timezone", "Asia/Shanghai"))
@@ -296,12 +296,11 @@ class LookiCompanionPlugin(Star):
             "backfill_days": int(self.config.get("backfill_days", 7)),
             "timezone": str_field("timezone", "Asia/Shanghai"),
             "request_timeout_seconds": int(self.config.get("request_timeout_seconds", 20)),
-            "inject_clues": bool(self.config.get("inject_clues", True)),
+            "clue_scope": str(self.config.get("clue_scope") or CLUE_SCOPE_ADMIN),
             "allow_group_query": bool(self.config.get("allow_group_query", False)),
             "store_raw_json": bool(self.config.get("store_raw_json", False)),
             "clue_days": int(self.config.get("clue_days", 7)),
             "max_clues": int(self.config.get("max_clues", 3)),
-            "owner_id": str_field("owner_id"),
         })
 
     async def api_set_config(self):
@@ -328,9 +327,12 @@ class LookiCompanionPlugin(Star):
                     if not low <= value <= high:
                         raise ValueError(f"{name} 需在 {low}-{high} 之间")
                     updates[name] = value
-            if "owner_id" in payload:
-                updates["owner_id"] = str(payload["owner_id"]).strip()
-            for name in ("auto_sync", "inject_clues", "allow_group_query", "store_raw_json"):
+            if "clue_scope" in payload:
+                scope = str(payload["clue_scope"]).strip()
+                if scope not in CLUE_SCOPES:
+                    raise ValueError(f"clue_scope 只能是 {' / '.join(CLUE_SCOPES)}")
+                updates["clue_scope"] = scope
+            for name in ("auto_sync", "allow_group_query", "store_raw_json"):
                 if name in payload:
                     updates[name] = bool(payload[name])
         except (ValueError, TypeError, KeyError) as exc:
