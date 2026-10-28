@@ -198,6 +198,65 @@ class ScheduleStoreTests(unittest.TestCase):
         self.assertIsInstance(clues, list)
         self.assertTrue(any("晚间仍有活动记录" in c for c in clues))
 
+    def test_corrections_preserve_history_and_original_fields(self):
+        self.store.upsert_remote([self.item(description="用户在宿舍", audio_summary="原始音频摘要")])
+        record = self.store.query("2026-10-25", "2026-10-25")[0]
+        self.store.add_correction(record["id"], "实际地点是教室，不是宿舍")
+        self.store.add_correction(record["id"], "当天上的是高等数学课")
+        row = self.store.query("2026-10-25", "2026-10-25")[0]
+        self.assertEqual(row["description"], "用户在宿舍")
+        self.assertEqual(row["audio_summary"], "原始音频摘要")
+        self.assertEqual([c["note"] for c in row["corrections"]], ["实际地点是教室，不是宿舍", "当天上的是高等数学课"])
+        self.store.upsert_remote([self.item(description="远端描述", audio_summary="原始音频摘要")])
+        row = self.store.query("2026-10-25", "2026-10-25")[0]
+        self.assertEqual(len(row["corrections"]), 2)
+        self.assertEqual(row["description"], "远端描述")
+
+    def test_correction_validation_and_deleted_record(self):
+        self.store.upsert_remote([self.item()])
+        item_id = self.store.query("2026-10-25", "2026-10-25")[0]["id"]
+        for note in ("", "   ", "x" * 2001):
+            with self.subTest(note_length=len(note)), self.assertRaises(ValueError):
+                self.store.add_correction(item_id, note)
+        with self.assertRaises(ValueError):
+            self.store.add_correction("missing", "不存在的记录")
+        self.store.delete(item_id)
+        with self.assertRaises(ValueError):
+            self.store.add_correction(item_id, "已删除记录")
+
+    def test_clues_include_corrections(self):
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        self.store.upsert_remote([self.item(date=today.isoformat(), start=f"{today.isoformat()}T09:00:00+08:00", end=f"{today.isoformat()}T10:00:00+08:00")])
+        item_id = self.store.query(today.isoformat(), today.isoformat())[0]["id"]
+        self.store.add_correction(item_id, "实际地点是教室，不是宿舍")
+        clues = self.store.clues(7, 3, "Asia/Shanghai")
+        self.assertTrue(any("对话校正：实际地点是教室，不是宿舍" in clue for clue in clues))
+
+    def test_correction_tool_permissions_and_query_payload(self):
+        from types import SimpleNamespace
+        from astrbot.core.agent.run_context import ContextWrapper
+        from astrbot_plugin_looki_companion.main import AddScheduleCorrectionTool, QueryScheduleTool
+
+        self.store.upsert_remote([self.item(description="用户在宿舍")])
+        plugin = SimpleNamespace(store=self.store, config={"allow_group_query": False})
+        registry = SimpleNamespace(get_registered_star=lambda _: plugin)
+
+        def context(admin):
+            event = SimpleNamespace(is_admin=lambda: admin, is_private_chat=lambda: True)
+            return ContextWrapper(context=SimpleNamespace(context=registry, event=event))
+
+        denied = asyncio.run(AddScheduleCorrectionTool().call(context(False), schedule_id="anything", note="不应写入"))
+        self.assertIn("只有 AstrBot 管理员", denied)
+        record = self.store.query("2026-10-25", "2026-10-25")[0]
+        saved = asyncio.run(AddScheduleCorrectionTool().call(context(True), schedule_id=record["id"], note="实际地点是教室，不是宿舍"))
+        self.assertTrue(json.loads(saved)["saved"])
+        result = asyncio.run(QueryScheduleTool().call(context(False), start_date="2026-10-25", end_date="2026-10-25"))
+        item = json.loads(result)["items"][0]
+        self.assertEqual(item["id"], record["id"])
+        self.assertEqual(item["description"], "用户在宿舍")
+        self.assertEqual([c["note"] for c in item["corrections"]], ["实际地点是教室，不是宿舍"])
+
 
 if __name__ == "__main__":
     unittest.main()

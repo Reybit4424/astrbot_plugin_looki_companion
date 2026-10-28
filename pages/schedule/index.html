@@ -89,6 +89,11 @@ button{cursor:pointer}
 .tl-audio-tag{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--clue-text);margin-bottom:4px}
 .tl-audio-tag::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--dot)}
 .tl-audio p{margin:0;font-size:12.5px;line-height:1.75;color:#5d4c12;white-space:pre-wrap}
+.tl-corrections{margin-top:10px;padding:8px 11px;border:1px solid #c9ddd4;border-radius:8px;background:var(--accent-soft)}
+.tl-correction-head{font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px}
+.tl-correction+.tl-correction{border-top:1px solid #d5e5dd;margin-top:7px;padding-top:7px}
+.tl-correction p{margin:0;font-size:12.5px;line-height:1.75;color:#315c4d;white-space:pre-wrap}
+.tl-correction time{display:block;margin-top:3px;font-size:11px;color:var(--muted)}
 .empty{color:var(--muted);text-align:center;padding:36px 0;font-size:13px}
 .recording{display:flex;gap:8px;align-items:center;justify-content:center;padding:10px;font-size:13px;color:var(--clue-text);background:var(--clue-bg);border:1px dashed var(--clue-line);border-radius:10px}
 .recording .pulse{width:7px;height:7px;border-radius:50%;background:var(--dot);animation:pulse 1.2s infinite}
@@ -361,6 +366,19 @@ function timelineItem(item){
     const tag=document.createElement('div');tag.className='tl-audio-tag';tag.textContent='音频摘要 · Looki 捕捉';
     const p=document.createElement('p');p.textContent=item.audio_summary;
     box.append(tag,p);body.append(box);
+  }
+  if(item.corrections&&item.corrections.length){
+    const box=document.createElement('div');box.className='tl-corrections';
+    const head=document.createElement('div');head.className='tl-correction-head';head.textContent='对话校正 · 以最新注记为准';
+    box.append(head);
+    for(const correction of item.corrections){
+      const note=document.createElement('div');note.className='tl-correction';
+      const p=document.createElement('p');p.textContent=correction.note;
+      const time=document.createElement('time');time.dateTime=correction.created_at;
+      time.textContent=new Date(correction.created_at).toLocaleString('zh-CN');
+      note.append(p,time);box.append(note);
+    }
+    body.append(box);
   }
   row.append(time,body);
   row.onclick=()=>select(item.id,false);

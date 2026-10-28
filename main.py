@@ -26,7 +26,7 @@ from .schedule_store import ScheduleStore
 
 PLUGIN_NAME = "astrbot_plugin_looki_companion"
 AUTHOR = "瑞贝特"
-VERSION = "0.5.3"
+VERSION = "0.6.0"
 DEFAULT_LOOKI_BASE_URL = "https://open.looki.tech/api/v1"
 CLUE_SCOPE_ADMIN = "仅对管理成员开放"
 CLUE_SCOPES = (CLUE_SCOPE_ADMIN, "关闭")
@@ -86,7 +86,7 @@ class LookiScheduleProvider:
 @dataclass
 class QueryScheduleTool(FunctionTool[AstrAgentContext]):
     name: str = "query_looki_schedule"
-    description: str = ("按日期查阅本地日程事实，返回时间段、标题、关键词，以及 Looki 自动生成的画面描述。日期按插件配置时区理解。近期背景线索只含标题关键词；用户询问细节、具体日期或活动时用本工具。关键词可能不同于用户用词：若返回 keyword_matched=false，说明关键词未直接命中，items 只是该日期范围内的候选记录，须如实告知用户并不得当作确定事实。结果是事实材料，不是回复台词。")
+    description: str = ("按日期查阅本地日程事实，返回记录 id、时间段、标题、关键词、Looki 原始描述和对话校正。日期按插件配置时区理解。用户询问细节、具体日期或活动时用本工具。若 corrections 与原始描述冲突，以最新的对话校正为准，原始描述仅作线索。关键词可能不同于用户用词：若返回 keyword_matched=false，说明关键词未直接命中，items 只是候选记录，须如实说明。结果是事实材料，不是回复台词。")
     parameters: dict = Field(default_factory=lambda: {
         "type": "object",
         "properties": {
@@ -116,11 +116,38 @@ class QueryScheduleTool(FunctionTool[AstrAgentContext]):
             return "该日期范围内没有记录。"
         payload = {
             "keyword_matched": matched,
-            "items": [{k: item[k] for k in ("date", "start_at", "end_at", "title", "keywords", "description", "source")} for item in items],
+            "items": [{k: item[k] for k in ("id", "date", "start_at", "end_at", "title", "keywords", "description", "corrections", "source")} for item in items],
         }
         if keyword and not matched:
             payload["notice"] = f"关键词「{keyword}」未直接匹配任何记录的标题或关键词；以上为该日期范围内的全部候选记录，不得当作确定事实，需要时请向用户确认。"
         return json.dumps(payload, ensure_ascii=False)
+
+
+@dataclass
+class AddScheduleCorrectionTool(FunctionTool[AstrAgentContext]):
+    name: str = "add_looki_correction"
+    description: str = ("为一条日程追加对话校正。当对话表明 Looki 原始描述中的地点、活动或其他事实有误，或出现了可以补充确认的新事实时，可根据对话自行判断并记录，不必等待用户明确说“纠正”。先用 query_looki_schedule 找到对应日程并取得 id；无法确定唯一记录时不要调用。不得修改原始 Looki 内容，不得凭空猜测。note 用简洁中文记录校正后的事实及必要反差，例如“实际地点是教室，不是宿舍”。校正会保留历史，后续查询以最新校正为准。")
+    parameters: dict = Field(default_factory=lambda: {
+        "type": "object",
+        "properties": {
+            "schedule_id": {"type": "string", "description": "query_looki_schedule 返回的日程 id"},
+            "note": {"type": "string", "description": "本次对话校正注记，最多 2000 字"},
+        },
+        "required": ["schedule_id", "note"],
+    })
+
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> ToolExecResult:
+        event = context.context.event
+        if event is None or not event.is_admin():
+            return "只有 AstrBot 管理员可以添加对话校正。"
+        plugin = context.context.context.get_registered_star(PLUGIN_NAME)
+        if not plugin:
+            return "日程插件当前不可用。"
+        try:
+            correction = await asyncio.to_thread(plugin.store.add_correction, str(kwargs.get("schedule_id") or "").strip(), str(kwargs.get("note") or ""))
+        except (ValueError, TypeError) as exc:
+            return str(exc)
+        return json.dumps({"saved": True, "correction": correction}, ensure_ascii=False)
 
 
 @register(PLUGIN_NAME, AUTHOR, "Looki 日程同步、管理与 Bot 查阅，支持本地持久化、日历编辑和近期生活线索。", VERSION)
@@ -136,7 +163,7 @@ class LookiCompanionPlugin(Star):
         base_url = str(self.config.get("looki_base_url") or DEFAULT_LOOKI_BASE_URL).strip()
         api_key = str(self.config.get("looki_api_key") or "").strip()
         self.schedule_provider = LookiScheduleProvider(base_url, api_key, int(self.config.get("request_timeout_seconds", 20))) if api_key else None
-        self.context.add_llm_tools(QueryScheduleTool())
+        self.context.add_llm_tools(QueryScheduleTool(), AddScheduleCorrectionTool())
         routes = [
             ("/" + PLUGIN_NAME + "/events", self.api_events, ["GET"]),
             ("/" + PLUGIN_NAME + "/density", self.api_density, ["GET"]),

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _iso(value: str) -> str:
@@ -42,8 +42,13 @@ class ScheduleStore:
                 raw_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS sync_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS schedule_corrections (
+                id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL,
+                note TEXT NOT NULL, created_at TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_schedules_day ON schedules(day);
             CREATE INDEX IF NOT EXISTS idx_schedules_looki ON schedules(looki_id);
+            CREATE INDEX IF NOT EXISTS idx_corrections_schedule ON schedule_corrections(schedule_id, created_at);
         """)
         columns = {r["name"] for r in self.db.execute("PRAGMA table_info(schedules)")}
         if "description" not in columns:
@@ -79,7 +84,16 @@ class ScheduleStore:
         terms = normalize(query)
         if terms:
             rows = [r for r in rows if terms in normalize(r["title"] + " " + " ".join(json.loads(r["keywords"]))) ]
-        return [self._row(r) for r in rows[:limit]]
+        items = [self._row(r) for r in rows[:limit]]
+        for item in items:
+            item["corrections"] = []
+        if items:
+            by_id = {item["id"]: item for item in items}
+            placeholders = ",".join("?" for _ in by_id)
+            corrections = self.db.execute(f"SELECT id,schedule_id,note,created_at FROM schedule_corrections WHERE schedule_id IN ({placeholders}) ORDER BY created_at", tuple(by_id)).fetchall()
+            for correction in corrections:
+                by_id[correction["schedule_id"]]["corrections"].append({"id": correction["id"], "note": correction["note"], "created_at": correction["created_at"]})
+        return items
 
     def search(self, start_day: str, end_day: str, query: str = "", limit: int = 50) -> tuple[list[dict[str, Any]], bool]:
         """按关键词检索；未命中时退化为该范围内的全部记录，第二个返回值表示关键词是否直接命中。"""
@@ -149,6 +163,19 @@ class ScheduleStore:
             self.db.execute("INSERT INTO schedules (id,dedupe_key,looki_id,day,start_at,end_at,title,description,keywords,source,user_edited,deleted,raw_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,0,NULL,?,?)", (new_id, f"manual:{new_id}", None, day, start, end, title, description, json.dumps(keywords, ensure_ascii=False), "manual", now, now))
             return new_id
 
+    def add_correction(self, item_id: str, note: str) -> dict[str, str]:
+        note = str(note).strip()
+        if not note or len(note) > 2000:
+            raise ValueError("校正注记不能为空且不能超过 2000 字")
+        now = datetime.now().astimezone().isoformat()
+        correction_id = str(uuid.uuid4())
+        with self.db:
+            schedule = self.db.execute("SELECT title,day FROM schedules WHERE id=? AND deleted=0", (item_id,)).fetchone()
+            if not schedule:
+                raise ValueError("记录不存在或已删除")
+            self.db.execute("INSERT INTO schedule_corrections (id,schedule_id,note,created_at) VALUES (?,?,?,?)", (correction_id, item_id, note, now))
+        return {"id": correction_id, "schedule_id": item_id, "note": note, "created_at": now, "title": schedule["title"], "date": schedule["day"]}
+
     def delete(self, item_id: str):
         with self.db:
             cur = self.db.execute("UPDATE schedules SET deleted=1,user_edited=1,updated_at=? WHERE id=? AND deleted=0", (datetime.now().astimezone().isoformat(), item_id))
@@ -167,7 +194,10 @@ class ScheduleStore:
         start = end - timedelta(days=max(1, min(days, 31)) - 1)
         rows = self.db.execute("SELECT day,title,keywords,end_at FROM schedules WHERE day BETWEEN ? AND ? AND deleted=0 ORDER BY day DESC,start_at DESC", (start.isoformat(), end.isoformat())).fetchall()
         late_days = {r["day"] for r in rows if datetime.fromisoformat(r["end_at"]).hour >= 22}
+        limit = max(0, min(max_items, 10))
         result = []
+        correction_rows = self.db.execute("SELECT s.day,s.title,c.note FROM schedule_corrections c JOIN schedules s ON s.id=c.schedule_id WHERE s.day BETWEEN ? AND ? AND s.deleted=0 ORDER BY c.created_at DESC LIMIT ?", (start.isoformat(), end.isoformat(), limit)).fetchall()
+        result.extend(f"{r['day']}《{r['title']}》对话校正：{r['note']}" for r in correction_rows)
         if len(late_days) >= 3:
             result.append(f"回看的日程中，有{len(late_days)}天记录到结束时间在22点或之后的活动；这只说明晚间仍有活动记录，不代表睡眠情况。")
         counts: dict[str, int] = {}
@@ -175,4 +205,4 @@ class ScheduleStore:
             for word in json.loads(row["keywords"]):
                 counts[word] = counts.get(word, 0) + 1
         result.extend(f"近期日程关键词多次出现：{word}（{count}次）。" for word, count in sorted(counts.items(), key=lambda x: (-x[1], x[0])) if count >= 2)
-        return result[:max(0, min(max_items, 10))]
+        return result[:limit]

@@ -2,7 +2,7 @@
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.23.1-2f6f5e)](https://github.com/AstrBotDevs/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.5.3-176b56)](https://github.com/RabbitZheng4424/astrbot_plugin_looki_companion/releases)
+[![Version](https://img.shields.io/badge/version-0.6.0-176b56)](https://github.com/RabbitZheng4424/astrbot_plugin_looki_companion/releases)
 [![License](https://img.shields.io/badge/license-MIT-e0a908)](LICENSE)
 [![QQ Group](https://img.shields.io/badge/QQ%E7%BE%A4-637906820-4a90d9)](https://qm.qq.com/q/637906820)
 
@@ -34,11 +34,12 @@
 
 - **自动同步**：按设定间隔拉取 Looki Moments 中已结构化的时间片段，向前回填指定天数。
 - **本地持久化**：SQLite 存储，WAL 模式，按日期与 Looki ID 建立索引，查询快、断电友好。
-- **日历页面**：月视图（黄点标示当日记录数，最多 5 个）、单日时间轴（小标题 + 关键词 + 详细描述 + 音频摘要）、当天目录一键跳转。
+- **日历页面**：月视图（黄点标示当日记录数，最多 5 个）、单日时间轴（小标题 + 关键词 + 详细描述 + 音频摘要 + 对话校正）、当天目录一键跳转。
 - **手动补录与编辑**：支持新增、修改、删除；删除采用墓碑标记，后续同步不会把已删记录复活。
 - **冲突保护**：同步不会覆盖你手工编辑过的记录，也不会删除手工录入的数据。
 - **Bot 查阅**：LLM 工具 `query_looki_schedule` 支持按日期范围与关键词查询，最多 366 天、100 条。
-- **近期线索注入**：可选在管理员（`admins_id`）的对话上下文中注入压缩后的近期生活线索，私聊与群聊均生效；非管理员不注入。
+- **对话校正**：Bot 可根据管理员对话追加校正注记，保留多条历史；原始 Looki 内容不变，后续查询以最新注记为准。
+- **近期线索注入**：可选在管理员（`admins_id`）的对话上下文中注入压缩后的近期生活线索与对话校正，私聊与群聊均生效；非管理员不注入。
 - **隐私友好**：原始 JSON 默认不落库，任何接口都不返回该字段。
 
 ## 界面布局
@@ -56,7 +57,8 @@
 │  │   关键词 chips             │  ├─────────────────────────┤
 │  │   详细描述 · 仅作线索        │  │  当天时间轴             │
 │  │   ▍音频摘要 · Looki 捕捉     │  │  09:00  小标题          │
-│  └────────────────────────────┘  │  14:00  小标题          │
+│  │   对话校正 · 以最新注记为准   │  │  14:00  小标题          │
+│  └────────────────────────────┘  │                         │
 │  ┌────────────────────────────┐  │  20:30  小标题          │
 │  │ 14:00  ─ 15:00  小标题 手动 │  │  单击跳转到对应时段      │
 │  └────────────────────────────┘  │                         │
@@ -64,7 +66,7 @@
 ```
 
 - **顶部**：品牌与同步状态、`日程 / 设置` 标签页切换、`立即同步` 按钮（同步中防连点）。
-- **左侧**：当天时间轴，按时间段排列；每条显示起止时间、小标题、「关键词」标签与关键词 chips、「详细描述 · 仅作线索」与完整描述、「音频摘要 · Looki 捕捉」块；仅手动补录的条目带「手动」徽标；悬停出现编辑按钮，点击选中。
+- **左侧**：当天时间轴，按时间段排列；每条显示起止时间、小标题、关键词、原始描述、音频摘要及全部「对话校正」注记与创建时间；仅手动补录的条目带「手动」徽标；悬停出现编辑按钮，点击选中。
 - **右上**：月视图，可切换上月 / 下月 / 回到本月；每天下方以黄点表示记录数（封顶 5 个）。
 - **右下**：当天时间轴目录（时间 + 小标题），单击平滑滚动到左侧对应时段并高亮，等同页内锚点。
 - **设置页**：Looki 连接参数与行为开关，API Key 掩码显示、可手动查看明文。
@@ -117,6 +119,7 @@ pydantic>=2.0.0
 ### LLM 工具 `query_looki_schedule`
 
 - 参数：日期范围、可选查询词、返回条数上限（最多 366 天、100 条）。
+- 返回记录 `id`、原始描述和 `corrections` 校正历史；两者冲突时以最新校正注记为准。
 - 标题与关键词会先做大小写、标点、空白归一化再匹配。
 - 关键词无命中时会降级返回该日期范围的全部记录，并在结果中附带 `notice` 与 `keyword_matched: false`，提示 LLM 如实说明而不是当作确定事实。
 - 无数据时明确返回「无记录」。
@@ -126,11 +129,20 @@ pydantic>=2.0.0
 1. 插件层 `allow_group_query` 决定群聊是否开放（默认关闭）；私聊查询不受身份限制。
 2. AstrBot 工具权限决定谁能触发：控制台「扩展 → 组件」中的 `query_looki_schedule` 可设为管理员或成员，也可整体停用。
 
+### 对话校正
+
+当管理员在对话中指出 Looki 识别有误，或补充了可以确认的新事实时，Bot 可先调用 `query_looki_schedule` 定位唯一记录，再调用 `add_looki_correction` 追加一条校正注记。无需说出「纠正」等固定命令，但 Bot 不得凭空猜测；无法确定唯一记录时不应写入。
+
+- 只有 AstrBot 管理员（`admins_id`）可以写入，工具内部会强制校验，私聊与群聊规则一致。
+- 注记独立保存，不修改 Looki 原始描述或音频摘要；多次校正按时间保留完整历史。
+- 插件页面只读展示全部注记及创建时间，后续查询和近期线索会携带校正。
+- 例如原始描述为「在宿舍」，管理员指出实际在教室后，可追加「实际地点是教室，不是宿舍」。
+
 ### 近期线索注入
 
 `clue_scope` 为 `仅对管理成员开放`（默认）时，AstrBot 管理员（`admins_id`）在私聊与群聊中的对话都会在请求前获得少量近期结构化线索；非管理员不注入；设为 `关闭` 则完全不注入。
 
-线索由记录中的日期、结束时间和关键词压缩生成，数量受 `clue_days` 与 `max_clues` 控制。描述保守，例如较晚结束的活动只会表述为「晚间仍有活动记录」，不会推断睡眠或健康情况。
+线索优先包含近期对话校正，再由记录中的日期、结束时间和关键词压缩生成，数量受 `clue_days` 与 `max_clues` 控制。描述保守，例如较晚结束的活动只会表述为「晚间仍有活动记录」，不会推断睡眠或健康情况。
 
 ## 数据存储与去重策略
 
@@ -151,7 +163,9 @@ pydantic>=2.0.0
 
 **备份**：请复制整个 `data/plugin_data/astrbot_plugin_looki_companion/` 目录，不要只复制主库文件而忽略 WAL。
 
-**Schema 版本**：使用 `PRAGMA user_version` 记录，当前 `SCHEMA_VERSION = 2`（v2 新增 `audio_summary` 列，旧库启动时自动 `ALTER TABLE` 增量迁移）；`day` 与 `looki_id` 各自拥有独立索引（`idx_schedules_day`、`idx_schedules_looki`）。
+**对话校正存储**：`schedule_corrections` 表通过 `schedule_id` 关联日程，保存注记与创建时间；查询时按时间升序附加 `corrections`，不写入原始日程字段。
+
+**Schema 版本**：使用 `PRAGMA user_version` 记录，当前 `SCHEMA_VERSION = 3`。v2 新增 `audio_summary` 列，v3 新增 `schedule_corrections` 表及索引，旧库启动时自动增量迁移；`day` 与 `looki_id` 各自拥有独立索引（`idx_schedules_day`、`idx_schedules_looki`）。
 
 ## 隐私说明
 
@@ -183,7 +197,7 @@ Looki 侧尚未生成该日期的结构化片段，或记录缺少开始 / 结�
 
 ## 开发与测试
 
-测试仅覆盖 `schedule_store.py`，使用标准库 `unittest`，不依赖 AstrBot 运行时的网络请求。
+测试覆盖 `schedule_store.py` 与 LLM 工具调用，使用标准库 `unittest`，不依赖 AstrBot 运行时的网络请求。
 
 ```bash
 # 在仓库根目录执行（Windows 用 ; 分隔，Linux / macOS 用 :）
@@ -191,7 +205,7 @@ set PYTHONPATH=<插件目录>;<AstrBot 目录>
 python tests/test_schedule_store.py -v
 ```
 
-当前共 15 个用例，覆盖：
+当前共 19 个用例，覆盖：
 
 - 请求头与字段映射（`description` / `audio_summary` 不进入日程事实）
 - 远端 upsert 幂等、用户编辑保护
@@ -204,7 +218,9 @@ python tests/test_schedule_store.py -v
 - `search()` 关键词命中 / 未命中降级 / 无关键词
 - `store_raw_json` 开关写库行为
 - `PRAGMA user_version` 与 schema 版本一致
-- `clues()` 使用传入时区
+- `clues()` 使用传入时区并携带对话校正
+- 多条校正历史、参数校验、同步后保留与原始字段不变
+- 校正工具的管理员权限及查询工具的校正返回字段
 
 ## 目录结构
 
@@ -231,6 +247,14 @@ astrbot_plugin_looki_companion/
 - 未在其他最低版本逐一运行验证。
 
 ## 更新日志
+
+### 0.6.0
+
+- 新增「对话校正」：管理员与 Bot 对话时，可由 Bot 调用 `add_looki_correction` 为唯一定位的日程追加校正注记。
+- 原始 Looki 描述与音频摘要保持不变，多次校正独立保留历史，同步不会清除注记。
+- 查询工具返回记录 `id` 与 `corrections`，原始描述与校正冲突时以最新注记为准；近期线索优先携带校正。
+- 时间轴只读展示全部校正注记与创建时间，写入工具强制校验 AstrBot 管理员身份。
+- 数据库新增 `schedule_corrections` 表与索引，`SCHEMA_VERSION` 升至 3，旧库自动迁移。
 
 ### 0.5.3
 
