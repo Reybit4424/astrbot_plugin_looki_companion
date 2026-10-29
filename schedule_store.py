@@ -103,6 +103,24 @@ class ScheduleStore:
             return items, bool(keyword)
         return self.query(start_day, end_day, "", limit), False
 
+    def find_latest_looki_activity(self, query: str) -> dict[str, Any] | None:
+        if not isinstance(query, str) or not query.strip() or len(query) > 200:
+            raise ValueError("查询词无效")
+        normalize = lambda value: "".join(c.casefold() for c in value if c.isalnum())
+        terms = normalize(query)
+        if not terms:
+            raise ValueError("查询词无效")
+        rows = self.db.execute("SELECT * FROM schedules WHERE deleted=0 AND looki_id IS NOT NULL AND looki_id != '' ORDER BY start_at DESC").fetchall()
+        correction_rows = self.db.execute("SELECT schedule_id,note FROM schedule_corrections ORDER BY created_at").fetchall()
+        corrections: dict[str, list[str]] = {}
+        for correction in correction_rows:
+            corrections.setdefault(correction["schedule_id"], []).append(correction["note"])
+        for row in rows:
+            fields = [row["title"], row["description"], row["audio_summary"], *json.loads(row["keywords"]), *corrections.get(row["id"], [])]
+            if terms in normalize(" ".join(fields)):
+                return self._row(row)
+        return None
+
     def density(self, year: int, month: int) -> dict[str, int]:
         if not 1 <= int(month) <= 12:
             raise ValueError("月份无效")

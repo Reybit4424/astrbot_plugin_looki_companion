@@ -152,17 +152,17 @@ class QueryScheduleTool(FunctionTool[AstrAgentContext]):
 @dataclass
 class SendLookiImageTool(FunctionTool[AstrAgentContext]):
     name: str = "send_looki_image"
-    description: str = ("按用户指定的日期和严格时段获取 Looki 图片，临时下载候选图，由多模态模型挑选 1 张后发送原图或图生图结果。用户想看某段时间的照片、将当时画面转成二次元或其他风格时使用。日期或起止时间不明确时先询问，不得猜测；只查该时段，无图时如实说明，不得扩展到当天其他时段。候选图只供模型内部挑选，最终只发送 1 张图。style_adjustment 仅用于本次风格调整。")
+    description: str = ("获取 Looki 图片，由多模态模型挑选 1 张后发送原图或图生图结果。支持两种调用方式：用户提供明确日期和起止时间时，传 date、start_time、end_time，只查该严格时段，不得扩展；用户只说“之前一起玩 Switch 的照片”这类活动回忆而没有日期时，只传 query 活动关键词，由插件从本地日程定位最近一次匹配，不得编造日期或起止时间。候选图只供模型内部挑选，最终只发送 1 张图。style_adjustment 仅用于本次风格调整。")
     parameters: dict = Field(default_factory=lambda: {
         "type": "object",
         "properties": {
-            "date": {"type": "string", "description": "图片所属日期 YYYY-MM-DD"},
-            "start_time": {"type": "string", "description": "时段开始时间 HH:MM 或 HH:MM:SS"},
-            "end_time": {"type": "string", "description": "时段结束时间 HH:MM 或 HH:MM:SS，必须晚于开始时间"},
+            "date": {"type": "string", "description": "明确时段模式的图片日期 YYYY-MM-DD，须与起止时间一起提供"},
+            "start_time": {"type": "string", "description": "明确时段模式的开始时间 HH:MM 或 HH:MM:SS"},
+            "end_time": {"type": "string", "description": "明确时段模式的结束时间 HH:MM 或 HH:MM:SS，必须晚于开始时间"},
+            "query": {"type": "string", "description": "活动回忆模式的关键词，例如 Switch；未提供明确日期和起止时间时使用"},
             "preference": {"type": "string", "description": "可选选图偏好，例如偏好人像、食物或清晰全景"},
             "style_adjustment": {"type": "string", "description": "可选的本次图生图风格调整；原图模式下不生效"},
         },
-        "required": ["date", "start_time", "end_time"],
     })
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> ToolExecResult:
@@ -174,15 +174,21 @@ class SendLookiImageTool(FunctionTool[AstrAgentContext]):
             return "当前对话无法发送图片。"
         if not _has_schedule_access(plugin, event):
             return "当前群聊未开放日程图片查询，请私聊使用，或让管理员配置白名单。"
+        day = str(kwargs.get("date") or "").strip()
+        start_time = str(kwargs.get("start_time") or "").strip()
+        end_time = str(kwargs.get("end_time") or "").strip()
+        query = str(kwargs.get("query") or "").strip()
+        preference = str(kwargs.get("preference") or "").strip()
+        style_adjustment = str(kwargs.get("style_adjustment") or "").strip()
+        time_fields = (day, start_time, end_time)
         try:
-            return await plugin.image_service.send_period_image(
-                event,
-                str(kwargs["date"] or "").strip(),
-                str(kwargs["start_time"] or "").strip(),
-                str(kwargs["end_time"] or "").strip(),
-                str(kwargs.get("preference") or "").strip(),
-                str(kwargs.get("style_adjustment") or "").strip(),
-            )
+            if all(time_fields):
+                return await plugin.image_service.send_period_image(event, day, start_time, end_time, preference, style_adjustment)
+            if any(time_fields):
+                return "明确时段找图需要同时提供 date、start_time 和 end_time；不要猜测缺失时间。"
+            if not query:
+                return "请提供完整日期和起止时间，或提供 query 活动关键词。"
+            return await plugin.image_service.send_activity_image(event, query, preference, style_adjustment)
         except (ValueError, TypeError, KeyError) as exc:
             return f"图片查询或生成参数无效：{exc}"
         except Exception as exc:
@@ -411,7 +417,7 @@ class LookiCompanionPlugin(Star):
             "max_clues": int(self.config.get("max_clues", 3)),
             "whitelist_user_ids": str_field("whitelist_user_ids"),
             "whitelist_group_ids": str_field("whitelist_group_ids"),
-            "image_candidate_count": int(self.config.get("image_candidate_count", 3)),
+            "image_candidate_count": int(self.config.get("image_candidate_count", 2)),
             "image_send_original": bool(self.config.get("image_send_original", False)),
             "image_style_prompt": str_field("image_style_prompt", DEFAULT_ANIME_PROMPT),
             "image_selection_provider_id": str_field("image_selection_provider_id"),

@@ -151,6 +151,56 @@ class ScheduleStoreTests(unittest.TestCase):
         self.assertFalse(matched)
         self.assertEqual(len(items), 1)
 
+    def test_activity_lookup_matches_description_audio_and_corrections(self):
+        for field in ("description", "audio_summary", "correction"):
+            with self.subTest(field=field):
+                item = self.item(
+                    looki_id=f"activity-{field}",
+                    title="普通活动",
+                    description="",
+                    audio_summary="",
+                )
+                self.store.upsert_remote([item])
+                record = self.store.query("2026-10-25", "2026-10-25")[0]
+                if field == "correction":
+                    self.store.add_correction(record["id"], "当时和朋友一起玩 Switch")
+                else:
+                    item[field] = "当时和朋友一起玩 Switch"
+                    self.store.upsert_remote([item])
+                found = self.store.find_latest_looki_activity("sWiTcH")
+                self.assertEqual(found["looki_id"], f"activity-{field}")
+                self.store.delete(record["id"])
+
+    def test_activity_lookup_uses_latest_looki_record_only(self):
+        def activity(looki_id, day):
+            return self.item(
+                looki_id=looki_id,
+                date=day,
+                start=f"{day}T20:00:00+08:00",
+                end=f"{day}T21:00:00+08:00",
+                title="和朋友玩 Switch",
+                keywords=[],
+            )
+
+        self.store.upsert_remote([
+            activity("older", "2026-10-23"),
+            activity("latest", "2026-10-25"),
+            activity("deleted", "2026-10-26"),
+        ])
+        deleted_id = self.store.query("2026-10-26", "2026-10-26")[0]["id"]
+        self.store.delete(deleted_id)
+        self.store.save({
+            "date": "2026-10-27",
+            "start": "2026-10-27T20:00:00+08:00",
+            "end": "2026-10-27T21:00:00+08:00",
+            "title": "手工记录 Switch",
+            "keywords": [],
+        })
+
+        found = self.store.find_latest_looki_activity(" Switch ")
+        self.assertEqual(found["looki_id"], "latest")
+        self.assertIsNone(self.store.find_latest_looki_activity("不存在的活动"))
+
     def test_upsert_remote_store_raw_false_does_not_write_raw_json(self):
         """store_raw=False（默认）时 raw_json 列为 NULL"""
         self.store.upsert_remote([self.item()], store_raw=False)

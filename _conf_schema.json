@@ -71,8 +71,8 @@
   },
   "image_candidate_count": {
     "type": "int",
-    "description": "每次交给多模态模型挑选的候选图片数量，1-9，默认 3。用户最终只会收到选中的 1 张。",
-    "default": 3
+    "description": "每次交给多模态模型挑选的候选图片数量，1-9，默认 2。用户最终只会收到选中的 1 张。",
+    "default": 2
   },
   "image_send_original": {
     "type": "bool",
