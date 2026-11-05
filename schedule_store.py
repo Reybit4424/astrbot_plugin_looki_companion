@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -16,6 +16,23 @@ def _iso(value: str) -> str:
     if parsed.tzinfo is None:
         raise ValueError("时间必须包含时区")
     return parsed.isoformat()
+
+
+def _instant(value: str) -> str:
+    """绝对时刻（UTC），用于跨时区偏移比较同一时间点。"""
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        raise ValueError("时间必须包含时区")
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _title_key(title: Any) -> str:
+    return "".join(c.casefold() for c in str(title or "") if c.isalnum())
+
+
+def _content_key(day: str, start: str, title: Any) -> str:
+    """内容签名：Looki 换 id 重新下发同一活动时，用它识别“同一条日程”。"""
+    return "content:" + "|".join((date.fromisoformat(day).isoformat(), _instant(start), _title_key(title)))
 
 
 def _key(item: dict[str, Any]) -> str:
@@ -79,11 +96,19 @@ class ScheduleStore:
         limit = max(1, min(int(limit), 100))
         if not isinstance(query, str) or len(query) > 200:
             raise ValueError("查询词无效")
-        rows = self.db.execute("SELECT * FROM schedules WHERE day BETWEEN ? AND ? AND deleted=0 ORDER BY start_at LIMIT 500", (start_day, end_day)).fetchall()
-        normalize = lambda value: "".join(c.casefold() for c in value if c.isalnum())
-        terms = normalize(query)
-        if terms:
-            rows = [r for r in rows if terms in normalize(r["title"] + " " + " ".join(json.loads(r["keywords"]))) ]
+        terms = "".join(c.casefold() for c in query if c.isalnum())
+        sql = "SELECT * FROM schedules WHERE day BETWEEN ? AND ? AND deleted=0 ORDER BY start_at"
+        if not terms:
+            rows = self.db.execute(sql + " LIMIT 500", (start_day, end_day)).fetchall()
+        else:
+            # 关键词过滤在 Python 侧完成，用游标流式读取并在凑够 limit 时提前结束，避免整段加载进内存
+            normalize = lambda value: "".join(c.casefold() for c in value if c.isalnum())
+            rows = []
+            for row in self.db.execute(sql, (start_day, end_day)):
+                if terms in normalize(row["title"] + " " + " ".join(json.loads(row["keywords"]))):
+                    rows.append(row)
+                    if len(rows) >= limit:
+                        break
         items = [self._row(r) for r in rows[:limit]]
         for item in items:
             item["corrections"] = []
@@ -134,27 +159,97 @@ class ScheduleStore:
         inserted = 0
         with self.db:
             for item in items:
-                normalized = {**item, "start": _iso(item["start"]), "end": _iso(item["end"])}
-                if datetime.fromisoformat(normalized["end"]) <= datetime.fromisoformat(normalized["start"]):
-                    raise ValueError("结束时间必须晚于开始时间")
-                normalized["date"] = date.fromisoformat(normalized["date"]).isoformat()
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    normalized = {**item, "start": _iso(item["start"]), "end": _iso(item["end"])}
+                    normalized["date"] = date.fromisoformat(normalized["date"]).isoformat()
+                    start_at = datetime.fromisoformat(normalized["start"])
+                    end_at = datetime.fromisoformat(normalized["end"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if end_at <= start_at:
+                    # Looki 会返回 start==end 的单点记录：补 1 秒保留；真正倒置的记录跳过，不拖垮整批同步
+                    if end_at == start_at:
+                        normalized["end"] = (start_at + timedelta(seconds=1)).isoformat()
+                    else:
+                        continue
                 if not isinstance(normalized.get("title"), str) or not normalized["title"].strip():
-                    raise ValueError("远端日程缺少标题")
+                    continue
                 if not isinstance(normalized.get("keywords", []), list):
-                    raise ValueError("远端关键词格式无效")
+                    continue
                 dedupe = _key(normalized)
-                existing = self.db.execute("SELECT * FROM schedules WHERE dedupe_key=?", (dedupe,)).fetchone()
                 keywords = json.dumps(normalized.get("keywords", []), ensure_ascii=False)
                 description = str(normalized.get("description") or "").strip()
                 audio = str(normalized.get("audio_summary") or "").strip()
                 raw = json.dumps(item, ensure_ascii=False) if store_raw else None
-                if existing:
+                existing = self.db.execute("SELECT * FROM schedules WHERE dedupe_key=?", (dedupe,)).fetchone()
+                if existing is None:
+                    # Looki 可能对同一活动换 id 重新下发：按内容签名兜底匹配，避免重复插入
+                    existing = self._content_match(normalized["date"], normalized["start"], normalized["title"])
+                    if existing is not None:
+                        # 认同一条日程后迁移远端标识，保证下次按 looki_id 直接命中
+                        self.db.execute("UPDATE schedules SET looki_id=?,dedupe_key=?,updated_at=? WHERE id=?", (normalized.get("looki_id"), dedupe, now, existing["id"]))
+                        existing = self.db.execute("SELECT * FROM schedules WHERE id=?", (existing["id"],)).fetchone()
+                if existing is not None:
                     if not existing["user_edited"] and existing["source"] == "looki" and not existing["deleted"]:
-                        self.db.execute("UPDATE schedules SET day=?,start_at=?,end_at=?,title=?,description=?,audio_summary=?,keywords=?,raw_json=?,updated_at=? WHERE id=?", (normalized["date"], normalized["start"], normalized["end"], normalized["title"], description, audio, keywords, raw, now, existing["id"]))
+                        self.db.execute("UPDATE schedules SET day=?,start_at=?,end_at=?,title=?,description=?,audio_summary=?,keywords=?,raw_json=?,updated_at=? WHERE id=?", (normalized["date"], normalized["start"], normalized["end"], normalized["title"], description, audio, keywords, raw if store_raw else existing["raw_json"], now, existing["id"]))
                     continue
                 self.db.execute("INSERT INTO schedules (id,dedupe_key,looki_id,day,start_at,end_at,title,description,audio_summary,keywords,source,user_edited,deleted,raw_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,0,?,?,?)", (str(uuid.uuid4()), dedupe, normalized.get("looki_id"), normalized["date"], normalized["start"], normalized["end"], normalized["title"], description, audio, keywords, "looki", raw, now, now))
                 inserted += 1
+            self.merge_content_duplicates()
         return inserted
+
+    def _content_match(self, day: str, start: str, title: str) -> sqlite3.Row | None:
+        """在同一天内按“开始时刻 + 标题”识别已存在的同一条活动。
+
+        精确匹配不限制来源（人工录入内容与远端一致时也应合并）；标题被人工改过时，
+        退化为只比对开始时刻，且仅限 Looki 来源记录，避免误并人工日程。
+        """
+        exact, relaxed = [], []
+        for row in self.db.execute("SELECT * FROM schedules WHERE day=?", (day,)).fetchall():
+            try:
+                row_start = _instant(row["start_at"])
+            except ValueError:
+                continue
+            if row_start != _instant(start):
+                continue
+            if _title_key(row["title"]) == _title_key(title):
+                exact.append(row)
+            elif row["source"] == "looki" and row["looki_id"]:
+                relaxed.append(row)
+        for bucket in (exact, relaxed):
+            if bucket:
+                # 优先保留：未删除 > 人工编辑 > 创建更早
+                return min(bucket, key=lambda r: (r["deleted"], 0 if r["user_edited"] else 1, r["created_at"]))
+        return None
+
+    def merge_content_duplicates(self) -> int:
+        """合并历史上因 Looki 更换 id 产生的重复记录。
+
+        每条内容相同的记录组只保留“未删除、人工编辑优先、创建更早”的一条，
+        其余纯 Looki 未编辑记录标记为已删除；人工记录与人工编辑过的记录永不删除。
+        """
+        groups: dict[str, list[sqlite3.Row]] = {}
+        for row in self.db.execute("SELECT * FROM schedules ORDER BY created_at").fetchall():
+            try:
+                key = _content_key(row["day"], row["start_at"], row["title"])
+            except ValueError:
+                continue
+            groups.setdefault(key, []).append(row)
+        now = datetime.now().astimezone().isoformat()
+        removed = 0
+        with self.db:
+            for rows in groups.values():
+                if len(rows) < 2:
+                    continue
+                keep = min(rows, key=lambda r: (r["deleted"], 0 if r["user_edited"] else 1, r["created_at"]))
+                for row in rows:
+                    if row["id"] == keep["id"] or row["deleted"] or row["user_edited"] or row["source"] != "looki":
+                        continue
+                    self.db.execute("UPDATE schedules SET deleted=1,updated_at=? WHERE id=?", (now, row["id"]))
+                    removed += 1
+        return removed
 
     def save(self, item: dict[str, Any], item_id: str | None = None) -> str:
         day = date.fromisoformat(item["date"]).isoformat()
@@ -170,15 +265,22 @@ class ScheduleStore:
         description = str(item.get("description") or "").strip()
         if len(description) > 20000:
             raise ValueError("描述过长")
+        has_audio_summary = "audio_summary" in item
+        audio_summary = str(item.get("audio_summary") or "").strip()
+        if len(audio_summary) > 20000:
+            raise ValueError("音频摘要过长")
         now = datetime.now().astimezone().isoformat()
         with self.db:
             if item_id:
-                cur = self.db.execute("UPDATE schedules SET day=?,start_at=?,end_at=?,title=?,description=?,keywords=?,user_edited=1,deleted=0,updated_at=? WHERE id=?", (day, start, end, title, description, json.dumps(keywords, ensure_ascii=False), now, item_id))
+                if has_audio_summary:
+                    cur = self.db.execute("UPDATE schedules SET day=?,start_at=?,end_at=?,title=?,description=?,audio_summary=?,keywords=?,user_edited=1,deleted=0,updated_at=? WHERE id=?", (day, start, end, title, description, audio_summary, json.dumps(keywords, ensure_ascii=False), now, item_id))
+                else:
+                    cur = self.db.execute("UPDATE schedules SET day=?,start_at=?,end_at=?,title=?,description=?,keywords=?,user_edited=1,deleted=0,updated_at=? WHERE id=?", (day, start, end, title, description, json.dumps(keywords, ensure_ascii=False), now, item_id))
                 if not cur.rowcount:
                     raise ValueError("记录不存在")
                 return item_id
             new_id = str(uuid.uuid4())
-            self.db.execute("INSERT INTO schedules (id,dedupe_key,looki_id,day,start_at,end_at,title,description,keywords,source,user_edited,deleted,raw_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,0,NULL,?,?)", (new_id, f"manual:{new_id}", None, day, start, end, title, description, json.dumps(keywords, ensure_ascii=False), "manual", now, now))
+            self.db.execute("INSERT INTO schedules (id,dedupe_key,looki_id,day,start_at,end_at,title,description,audio_summary,keywords,source,user_edited,deleted,raw_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,0,NULL,?,?)", (new_id, f"manual:{new_id}", None, day, start, end, title, description, audio_summary, json.dumps(keywords, ensure_ascii=False), "manual", now, now))
             return new_id
 
     def add_correction(self, item_id: str, note: str) -> dict[str, str]:

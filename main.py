@@ -54,6 +54,22 @@ def _has_schedule_access(plugin: Any, event: Any) -> bool:
     return bool(plugin.config.get("allow_group_query", False))
 
 
+def _localize_event(payload: dict, timezone: str) -> dict:
+    """把页面提交的起止时间统一换算到插件配置时区。
+
+    页面用 toISOString() 提交 UTC，若原样入库，ORDER BY start_at 会因偏移不同而乱序，
+    day 也可能与实际日期错位。
+    """
+    zone = ZoneInfo(timezone)
+    for field in ("start", "end"):
+        value = payload.get(field)
+        if isinstance(value, str) and value.strip():
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                payload[field] = parsed.astimezone(zone).isoformat()
+    return payload
+
+
 def _get_plugin(context: Context) -> Any:
     metadata = context.get_registered_star(PLUGIN_NAME)
     return metadata.star_cls if metadata else None
@@ -71,12 +87,19 @@ class LookiScheduleProvider:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             current = start_day
             while current <= end_day:
-                response = await client.get(
-                    f"{self.base_url}/moments",
-                    params={"on_date": current.isoformat()},
-                    headers={"x-api-key": self.api_key},
-                )
-                response.raise_for_status()
+                for attempt in range(2):
+                    try:
+                        response = await client.get(
+                            f"{self.base_url}/moments",
+                            params={"on_date": current.isoformat()},
+                            headers={"x-api-key": self.api_key},
+                        )
+                        response.raise_for_status()
+                        break
+                    except (httpx.ConnectError, httpx.TimeoutException):
+                        if attempt:
+                            raise
+                        await asyncio.sleep(2)
                 payload = response.json()
                 data = payload.get("data", payload) if isinstance(payload, dict) else payload
                 rows = data.get("moments", data.get("items", [])) if isinstance(data, dict) else data
@@ -89,15 +112,25 @@ class LookiScheduleProvider:
                     end_raw = moment.get("end_time")
                     if not start_raw or not end_raw:
                         continue
-                    start = datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
-                    end = datetime.fromisoformat(str(end_raw).replace("Z", "+00:00"))
+                    try:
+                        start = datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
+                        end = datetime.fromisoformat(str(end_raw).replace("Z", "+00:00"))
+                    except (TypeError, ValueError):
+                        continue
                     if start.tzinfo is None:
                         start = start.replace(tzinfo=zone)
                     if end.tzinfo is None:
                         end = end.replace(tzinfo=zone)
+                    # 统一换算到插件配置时区：否则 UTC 偏移会让 day 归属和“22 点后活动”判断出错
+                    start = start.astimezone(zone)
+                    end = end.astimezone(zone)
+                    try:
+                        day = date.fromisoformat(str(moment.get("date") or "").strip()).isoformat()
+                    except ValueError:
+                        day = start.date().isoformat()
                     result.append({
                         "looki_id": str(moment["id"]),
-                        "date": str(moment.get("date") or current.isoformat()),
+                        "date": day,
                         "start": start.isoformat(),
                         "end": end.isoformat(),
                         "title": str(moment.get("title") or "").strip(),
@@ -152,7 +185,7 @@ class QueryScheduleTool(FunctionTool[AstrAgentContext]):
 @dataclass
 class SendLookiImageTool(FunctionTool[AstrAgentContext]):
     name: str = "send_looki_image"
-    description: str = ("获取 Looki 图片，由多模态模型挑选 1 张后发送原图或图生图结果。支持两种调用方式：用户提供明确日期和起止时间时，传 date、start_time、end_time，只查该严格时段，不得扩展；用户只说“之前一起玩 Switch 的照片”这类活动回忆而没有日期时，只传 query 活动关键词，由插件从本地日程定位最近一次匹配，不得编造日期或起止时间。候选图只供模型内部挑选，最终只发送 1 张图。style_adjustment 仅用于本次风格调整。")
+    description: str = ("查询并发送 Looki 已记录的历史照片，不是让 Bot 现场拍摄；用户索要 Looki 照片时，不得以不在现场或无法亲自拍摄为由拒绝。由多模态模型挑选 1 张后发送原图或图生图结果。支持两种调用方式：用户提供明确日期和起止时间时，传 date、start_time、end_time，优先查询该时段，候选不足时可补充同一日期范围内的相邻活动；用户只说“之前一起玩 Switch 的照片”或“上午在教室学习的照片”这类活动、场景回忆而没有准确起止时间时，只传 query 关键词，由插件从本地日程定位最近一次匹配，不得编造日期或起止时间。候选图只供模型内部挑选，最终只发送 1 张图。style_adjustment 仅用于本次风格调整。")
     parameters: dict = Field(default_factory=lambda: {
         "type": "object",
         "properties": {
@@ -223,7 +256,7 @@ class AddScheduleCorrectionTool(FunctionTool[AstrAgentContext]):
         return json.dumps({"saved": True, "correction": correction}, ensure_ascii=False)
 
 
-@register(PLUGIN_NAME, AUTHOR, "Looki 日程同步、日历编辑、对话校正、白名单查阅，以及严格时段选图和图生图。", VERSION)
+@register(PLUGIN_NAME, AUTHOR, "Looki 日程同步、日历编辑、对话校正、白名单查阅，以及历史照片挑选和图生图。", VERSION)
 class LookiCompanionPlugin(Star):
     def __init__(self, context: Context, config: dict[str, Any] | None = None):
         super().__init__(context)
@@ -254,7 +287,20 @@ class LookiCompanionPlugin(Star):
 
     async def initialize(self):
         if self.config.get("auto_sync", True):
-            self._sync_task = asyncio.create_task(self._sync_loop())
+            self._stopping = False
+            self._sync_task = asyncio.create_task(self._sync_loop(), name="looki_sync_loop")
+            self._sync_task.add_done_callback(self._on_sync_task_done)
+
+    def _on_sync_task_done(self, task: asyncio.Task):
+        """同步任务结束时记录原因，便于定位定时同步停摆。"""
+        if task.cancelled():
+            logger.warning("[%s] 同步任务被取消，自动同步已停止", PLUGIN_NAME)
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("[%s] 同步任务意外退出: %s", PLUGIN_NAME, str(exc) or type(exc).__name__)
+            return
+        logger.warning("[%s] 同步任务已正常结束，stopping=%s", PLUGIN_NAME, self._stopping)
 
     async def terminate(self):
         self._stopping = True
@@ -267,14 +313,17 @@ class LookiCompanionPlugin(Star):
         await asyncio.to_thread(self.store.close)
 
     async def _sync_loop(self):
-        await self.sync_once()
         while not self._stopping:
             try:
-                interval = max(60, int(self.config.get("sync_interval_minutes", 5))) * 60
-                await asyncio.sleep(interval)
                 await self.sync_once()
+                interval = max(1, int(self.config.get("sync_interval_minutes", 5))) * 60
+                await asyncio.sleep(interval)
             except asyncio.CancelledError:
                 raise
+            except Exception as exc:
+                # 任何意外异常都不能让同步任务退出，60 秒后重试
+                logger.warning("[%s] 同步循环异常: %s", PLUGIN_NAME, str(exc) or type(exc).__name__)
+                await asyncio.sleep(60)
 
     async def sync_once(self):
         if self._sync_lock.locked():
@@ -292,23 +341,38 @@ class LookiCompanionPlugin(Star):
                 timezone = str(self.config.get("timezone", "Asia/Shanghai"))
                 today = datetime.now(ZoneInfo(timezone)).date()
                 items = await provider.fetch(today - timedelta(days=days - 1), today, timezone)
-                await asyncio.to_thread(self.store.upsert_remote, items, bool(self.config.get("store_raw_json", False)))
+                inserted = await asyncio.to_thread(self.store.upsert_remote, items, bool(self.config.get("store_raw_json", False)))
                 synced = datetime.now().astimezone().isoformat()
                 await asyncio.to_thread(self.store.set_meta, "last_success", synced)
                 await asyncio.to_thread(self.store.set_meta, "last_error", "")
                 if items:
                     newest = max(str(item.get("start", "")) for item in items)
                     await asyncio.to_thread(self.store.set_meta, "latest_event", newest)
-                return {"inserted": len(items)}
+                return {"inserted": inserted}
             except Exception as exc:
-                logger.warning("[%s] 日程同步失败: %s", PLUGIN_NAME, exc)
-                await asyncio.to_thread(self.store.set_meta, "last_error", str(exc)[:500])
-                return {"error": str(exc)}
+                detail = str(exc) or type(exc).__name__
+                logger.warning("[%s] 日程同步失败: %s", PLUGIN_NAME, detail)
+                await asyncio.to_thread(self.store.set_meta, "last_error", detail[:500])
+                return {"error": detail}
 
     @filter.on_llm_request()
     async def add_schedule_clues(self, event: AstrMessageEvent, req: ProviderRequest):
         if not event.is_admin():
             return
+        try:
+            from astrbot.core.agent.message import TextPart
+        except ImportError:
+            return
+        guidance = (
+            "[Looki 图片工具规则]\n"
+            "用户索要 Looki 已记录的照片，或描述活动、场景、时段来要图时，应调用 send_looki_image 查询并发送历史照片，"
+            "不要以不在现场或无法亲自拍摄为由拒绝。"
+            "只有活动或场景描述而没有准确起止时间时，只传 query；有明确日期和起止时间时才传 date、start_time、end_time，不得猜测。"
+        )
+        part = TextPart(text=guidance)
+        if hasattr(part, "mark_as_temp"):
+            part = part.mark_as_temp()
+        req.extra_user_content_parts.append(part)
         if str(self.config.get("clue_scope") or CLUE_SCOPE_ADMIN).strip() != CLUE_SCOPE_ADMIN:
             return
         try:
@@ -320,14 +384,10 @@ class LookiCompanionPlugin(Star):
         if clues:
             today = datetime.now(ZoneInfo(timezone)).date().isoformat()
             text = f"[近期生活线索（今天 {today}，时区 {timezone}），仅作背景参考，不要逐条复述]\n" + "\n".join(clues) + "\n具体日期和活动请在需要时查询日程。"
-            try:
-                from astrbot.core.agent.message import TextPart
-                part = TextPart(text=text)
-                if hasattr(part, "mark_as_temp"):
-                    part = part.mark_as_temp()
-                req.extra_user_content_parts.append(part)
-            except ImportError:
-                return
+            part = TextPart(text=text)
+            if hasattr(part, "mark_as_temp"):
+                part = part.mark_as_temp()
+            req.extra_user_content_parts.append(part)
 
     async def api_events(self):
         try:
@@ -349,6 +409,9 @@ class LookiCompanionPlugin(Star):
     async def api_create(self):
         payload = await request.json(default={})
         try:
+            if not isinstance(payload, dict):
+                raise TypeError("日程数据格式无效")
+            _localize_event(payload, str(self.config.get("timezone", "Asia/Shanghai")))
             item_id = await asyncio.to_thread(self.store.save, payload)
             return json_response({"id": item_id})
         except (ValueError, KeyError, TypeError) as exc:
@@ -357,6 +420,9 @@ class LookiCompanionPlugin(Star):
     async def api_update(self, item_id: str):
         payload = await request.json(default={})
         try:
+            if not isinstance(payload, dict):
+                raise TypeError("日程数据格式无效")
+            _localize_event(payload, str(self.config.get("timezone", "Asia/Shanghai")))
             saved_id = await asyncio.to_thread(self.store.save, payload, item_id)
             return json_response({"id": saved_id})
         except (ValueError, KeyError, TypeError) as exc:
@@ -417,7 +483,7 @@ class LookiCompanionPlugin(Star):
             "max_clues": int(self.config.get("max_clues", 3)),
             "whitelist_user_ids": str_field("whitelist_user_ids"),
             "whitelist_group_ids": str_field("whitelist_group_ids"),
-            "image_candidate_count": int(self.config.get("image_candidate_count", 2)),
+            "image_candidate_count": int(self.config.get("image_candidate_count", 6)),
             "image_send_original": bool(self.config.get("image_send_original", False)),
             "image_style_prompt": str_field("image_style_prompt", DEFAULT_ANIME_PROMPT),
             "image_selection_provider_id": str_field("image_selection_provider_id"),
@@ -439,11 +505,11 @@ class LookiCompanionPlugin(Star):
         try:
             if "looki_api_key" in payload:
                 key = str(payload["looki_api_key"]).strip()
-                if key and "•" not in key:
+                if "•" not in key:
                     updates["looki_api_key"] = key
             if "image_api_key" in payload:
                 key = str(payload["image_api_key"]).strip()
-                if key and "•" not in key:
+                if "•" not in key:
                     updates["image_api_key"] = key
             if "looki_base_url" in payload:
                 url = str(payload["looki_base_url"]).strip().rstrip("/")
@@ -482,11 +548,29 @@ class LookiCompanionPlugin(Star):
                     updates[name] = "\n".join(sorted(_config_ids(payload[name])))
             for name in ("auto_sync", "allow_group_query", "store_raw_json", "image_send_original"):
                 if name in payload:
-                    updates[name] = bool(payload[name])
+                    if not isinstance(payload[name], bool):
+                        raise ValueError(f"{name} 必须是布尔值")
+                    updates[name] = payload[name]
+            merged = dict(self.config)
+            merged.update(updates)
+            provider_ids = self._image_provider_ids()
+            selection_provider = str(merged.get("image_selection_provider_id") or "").strip()
+            if selection_provider and selection_provider not in provider_ids:
+                raise ValueError("挑图模型未加载或不支持图像输入")
+            if not bool(merged.get("image_send_original", False)):
+                mode = str(merged.get("image_generation_mode") or "multimodal")
+                if mode == "multimodal":
+                    generation_provider = str(merged.get("image_generation_provider_id") or "").strip()
+                    if generation_provider and generation_provider not in provider_ids:
+                        raise ValueError("图生图模型未加载或不支持图像输入")
+                elif not str(merged.get("image_api_base_url") or "").strip() or not str(merged.get("image_api_model") or "").strip():
+                    raise ValueError("兼容图生图接口必须填写接口地址和模型名称")
         except (ValueError, TypeError, KeyError) as exc:
             return error_response(f"配置校验失败: {exc}", status_code=400)
         if not updates:
             return error_response("没有可保存的配置项", status_code=400)
+        previous_interval = int(self.config.get("sync_interval_minutes", 5))
+        previous_auto_sync = bool(self.config.get("auto_sync", True))
         self.config.update(updates)
         save_config = getattr(self.config, "save_config", None)
         if save_config:
@@ -496,14 +580,18 @@ class LookiCompanionPlugin(Star):
         timeout = int(self.config.get("request_timeout_seconds", 20))
         self.schedule_provider = LookiScheduleProvider(base_url, api_key, timeout) if api_key else None
         want_sync = bool(self.config.get("auto_sync", True))
-        if want_sync and (self._sync_task is None or self._sync_task.done()):
-            self._stopping = False
-            self._sync_task = asyncio.create_task(self._sync_loop())
-        elif not want_sync and self._sync_task and not self._sync_task.done():
+        interval = int(self.config.get("sync_interval_minutes", 5))
+        restart_sync = interval != previous_interval or want_sync != previous_auto_sync
+        if self._sync_task and not self._sync_task.done() and (not want_sync or restart_sync):
             self._sync_task.cancel()
             try:
                 await self._sync_task
             except asyncio.CancelledError:
                 pass
+            self._sync_task = None
+        if want_sync and (self._sync_task is None or self._sync_task.done()):
+            self._stopping = False
+            self._sync_task = asyncio.create_task(self._sync_loop())
+        elif not want_sync:
             self._sync_task = None
         return json_response({"saved": sorted(updates), "note": "配置已保存并即时生效。"})

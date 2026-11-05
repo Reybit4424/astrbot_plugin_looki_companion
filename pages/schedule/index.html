@@ -48,6 +48,7 @@ button{cursor:pointer}
 .card-head h2{font-size:15px}
 .head-acts{margin-left:auto;display:flex;gap:6px;align-items:center}
 .meta{margin:2px 0 0;font-size:12px;color:var(--muted)}
+.meta.err{color:#b4451f}
 .hint{font-size:12px;color:var(--muted);margin-left:auto}
 
 /* ---------- 主布局：左时间轴 / 右月视图+当日详情 ---------- */
@@ -212,10 +213,11 @@ dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
 
 <main class="card settings" id="viewSettings" hidden>
   <h2>插件设置</h2>
-  <p class="meta">保存后写入插件配置；自动同步按新的间隔重新计时。</p>
+  <p class="meta" id="cfgNotice">保存后写入插件配置；自动同步按新的间隔重新计时。</p>
   <div class="grid2">
     <label class="full">Looki API Key
       <div class="keyrow"><input id="cfgKey" type="password" autocomplete="off"><button type="button" class="icon" id="eye" title="显示/隐藏">👁</button></div>
+      <small>保持掩码不修改，留空保存可清除密钥</small>
     </label>
     <label class="full">接口地址<input id="cfgUrl" placeholder="https://open.looki.tech/api/v1"></label>
     <label>同步间隔（分钟）<input id="cfgInterval" type="number" min="1" max="1440"></label>
@@ -231,12 +233,12 @@ dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
     <h3>图片与模型</h3>
     <label>候选图片数量<input id="cfgImageCount" type="number" min="1" max="9"></label>
     <label>挑图多模态模型<select id="cfgSelectionProvider"><option value="">跟随当前对话模型</option></select></label>
-    <label>图生图方式<select id="cfgGenerationMode"><option value="multimodal">AstrBot 多模态模型</option><option value="openai_compatible">兼容图生图接口</option></select></label>
-    <label>图生图多模态模型<select id="cfgGenerationProvider"><option value="">跟随挑图模型</option></select></label>
-    <label class="full">默认图生图风格<textarea id="cfgImageStyle" rows="3"></textarea></label>
-    <label class="full">兼容图生图接口地址<input id="cfgImageApiUrl" placeholder="/v1、完整 /images/edits 或 /images/generations"></label>
-    <label>兼容图生图模型<input id="cfgImageApiModel" placeholder="模型名称"></label>
-    <label>兼容接口 API Key<input id="cfgImageApiKey" type="password" autocomplete="off"></label>
+    <label id="fieldGenerationMode">图生图方式<select id="cfgGenerationMode"><option value="multimodal">AstrBot 多模态模型</option><option value="openai_compatible">兼容图生图接口</option></select></label>
+    <label id="fieldGenerationProvider">图生图多模态模型<select id="cfgGenerationProvider"><option value="">跟随挑图模型</option></select></label>
+    <label class="full" id="fieldImageStyle">默认图生图风格<textarea id="cfgImageStyle" rows="3"></textarea></label>
+    <label class="full" id="fieldImageApiUrl">兼容图生图接口地址<input id="cfgImageApiUrl" placeholder="/v1、完整 /images/edits 或 /images/generations"></label>
+    <label id="fieldImageApiModel">兼容图生图模型<input id="cfgImageApiModel" placeholder="模型名称"></label>
+    <label id="fieldImageApiKey">兼容接口 API Key<input id="cfgImageApiKey" type="password" autocomplete="off"><small>保持掩码不修改，留空保存可清除；无密钥接口可留空</small></label>
   </div>
   <div class="checks">
     <label class="check"><input id="cfgAuto" type="checkbox"><span>自动后台同步<small>插件启动后立即同步一次，此后按间隔轮询</small></span></label>
@@ -254,6 +256,7 @@ dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
   <div class="row2"><label>开始时间<input name="start" type="datetime-local" required></label><label>结束时间<input name="end" type="datetime-local" required></label></div>
   <label>关键词（逗号分隔）<input name="keywords"></label>
   <label>描述<textarea name="description" rows="5"></textarea></label>
+  <label>音频摘要<textarea name="audio_summary" rows="5"></textarea></label>
   <menu><button value="cancel">取消</button><button type="button" class="danger" id="delete">删除</button><button type="button" class="primary" id="save">保存</button></menu>
 </form></dialog>
 
@@ -442,6 +445,7 @@ function edit(item){
   form.elements.end.value=item?.end_at?localDT(item.end_at):`${day}T10:00`;
   form.elements.keywords.value=(item?.keywords||[]).join(',');
   form.elements.description.value=item?.description||'';
+  form.elements.audio_summary.value=item?.audio_summary||'';
   $('delete').hidden=!selectedId;
   dialog.showModal();
 }
@@ -454,8 +458,9 @@ $('save').onclick=async e=>{
     title:form.elements.title.value.trim(),
     start:new Date(form.elements.start.value).toISOString(),
     end:new Date(form.elements.end.value).toISOString(),
-    keywords:form.elements.keywords.value.split(',').map(x=>x.trim()).filter(Boolean),
+    keywords:form.elements.keywords.value.split(/[,，、;；\s]+/).map(x=>x.trim()).filter(Boolean),
     description:form.elements.description.value.trim(),
+    audio_summary:form.elements.audio_summary.value.trim(),
   };
   try{
     await bridge.apiPost(selectedId?`events/${selectedId}/update`:'events',value);
@@ -497,6 +502,17 @@ async function status(){
 
 /* ---------- 设置 ---------- */
 let keyRevealed=false;
+function updateImageFields(){
+  const original=$('cfgImageOriginal').checked,mode=$('cfgGenerationMode').value;
+  $('fieldGenerationMode').hidden=original;
+  $('fieldGenerationProvider').hidden=original||mode!=='multimodal';
+  $('fieldImageStyle').hidden=original;
+  $('fieldImageApiUrl').hidden=original||mode!=='openai_compatible';
+  $('fieldImageApiModel').hidden=original||mode!=='openai_compatible';
+  $('fieldImageApiKey').hidden=original||mode!=='openai_compatible';
+}
+$('cfgGenerationMode').onchange=updateImageFields;
+$('cfgImageOriginal').onchange=updateImageFields;
 function fillProviders(id,providerIds,current,emptyLabel){
   const select=$(id),ids=Array.isArray(providerIds)?providerIds:[];
   select.replaceChildren(new Option(emptyLabel,''));
@@ -507,7 +523,17 @@ function fillProviders(id,providerIds,current,emptyLabel){
   select.value=current||'';
 }
 async function loadConfig(){
-  let c={};try{c=await bridge.apiGet('config')}catch(e){}
+  let c;
+  try{c=await bridge.apiGet('config')}
+  catch(err){
+    $('cfgSave').disabled=true;
+    $('cfgNotice').textContent='配置读取失败，已禁止保存。请检查插件后端后重试：'+(err?.message||err);
+    $('cfgNotice').classList.add('err');
+    return;
+  }
+  $('cfgSave').disabled=false;
+  $('cfgNotice').textContent='保存后写入插件配置；自动同步按新的间隔重新计时。';
+  $('cfgNotice').classList.remove('err');
   keyRevealed=false;$('cfgKey').type='password';$('cfgKey').value=c.looki_api_key_masked||'';
   $('cfgUrl').value=c.looki_base_url||'';
   $('cfgAuto').checked=!!c.auto_sync;$('cfgScope').value=c.clue_scope||'仅对管理成员开放';
@@ -517,7 +543,7 @@ async function loadConfig(){
   $('cfgClueDays').value=c.clue_days;$('cfgMaxClues').value=c.max_clues;
   $('cfgWhitelistUsers').value=c.whitelist_user_ids||'';
   $('cfgWhitelistGroups').value=c.whitelist_group_ids||'';
-  $('cfgImageCount').value=c.image_candidate_count??3;
+  $('cfgImageCount').value=c.image_candidate_count??6;
   $('cfgImageOriginal').checked=!!c.image_send_original;
   $('cfgImageStyle').value=c.image_style_prompt||'';
   $('cfgGenerationMode').value=c.image_generation_mode||'multimodal';
@@ -526,6 +552,7 @@ async function loadConfig(){
   $('cfgImageApiUrl').value=c.image_api_base_url||'';
   $('cfgImageApiModel').value=c.image_api_model||'';
   $('cfgImageApiKey').value=c.image_api_key_masked||'';
+  updateImageFields();
 }
 $('eye').onclick=async()=>{
   keyRevealed=!keyRevealed;
