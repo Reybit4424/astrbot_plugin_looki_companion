@@ -44,6 +44,11 @@ button{cursor:pointer}
 .ghost{border:none;background:none;padding:4px 6px;border-radius:6px;color:var(--muted);font-size:12px}
 .ghost:hover{background:var(--accent-soft);color:var(--accent)}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;box-shadow:0 1px 2px rgba(20,40,32,.04)}
+.initial-import{grid-column:1/-1;border-color:var(--accent)}
+.initial-import h2{font-size:17px;margin-bottom:8px}
+.initial-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+.initial-message{margin:12px 0 0;color:#b4451f;font-size:13px}
+.icon:disabled{opacity:.55;cursor:default}
 .card-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
 .card-head h2{font-size:15px}
 .head-acts{margin-left:auto;display:flex;gap:6px;align-items:center}
@@ -56,11 +61,43 @@ button{cursor:pointer}
   display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:16px;
   align-items:start;padding:16px 20px 28px;max-width:1500px;margin:0 auto;
 }
-.side{display:grid;gap:16px;position:sticky;top:66px}
+.side{display:flex;flex-direction:column;gap:16px;position:sticky;top:66px;max-height:calc(100vh - 82px)}
+.side-body{display:flex;flex-direction:column;gap:16px;flex:1;min-height:0;overflow-y:auto;padding-right:2px}
+.side-head{display:none;align-items:center;gap:8px;flex-shrink:0}
+.side-head h2{font-size:15px}
+.side-foot{
+  flex-shrink:0;border:1px dashed var(--line);border-radius:var(--r);
+  padding:12px 14px;font-size:12px;color:var(--muted);text-align:center;
+}
+.side-backdrop{display:none}
+.layout.side-hidden{grid-template-columns:minmax(0,1fr)}
+.layout.side-hidden .side{display:none}
+body.side-lock{overflow:hidden}
+
+/* 侧栏内数据居中 */
+.side .cal-head,.side .card-head{flex-direction:column;align-items:center;gap:6px;text-align:center}
+.side .cal-head .head-acts,.side .card-head .head-acts,.side .card-head .hint{margin-left:0}
+.side .legend{justify-content:center;text-align:center;flex-wrap:wrap}
+.side .out-row{display:flex;justify-content:center;align-items:baseline;gap:8px;text-align:center}
+.side .out-row .out-time{flex:none}
+.side .out-title{text-align:center}
+.side .placeholder{text-align:center}
+
 @media(max-width:960px){
   .layout{grid-template-columns:1fr}
-  .side{position:static}
   .status{max-width:34vw}
+  .side{
+    position:fixed;top:0;right:0;bottom:0;z-index:40;max-height:none;
+    width:min(86vw,360px);gap:12px;background:var(--bg);
+    border-left:1px solid var(--line);box-shadow:-14px 0 34px rgba(20,40,32,.16);
+    padding:calc(12px + env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom));
+    transform:translateX(100%);transition:transform .25s ease;
+  }
+  .side.open{transform:translateX(0)}
+  .side-head{display:flex}
+  .side-head .icon{margin-left:auto}
+  .layout.side-hidden .side{display:flex}
+  .side-backdrop.show{display:block;position:fixed;inset:0;z-index:39;background:rgba(18,30,24,.34)}
 }
 
 /* ---------- 时间轴 ---------- */
@@ -119,6 +156,39 @@ button{cursor:pointer}
 .legend{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11.5px;color:var(--muted)}
 .legend i{width:5px;height:5px;border-radius:50%;background:var(--dot)}
 
+/* ---------- 视图工具与媒体 ---------- */
+.tl-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
+.seg{display:flex;gap:2px;padding:2px;background:#eef2f0;border-radius:8px}
+.seg button{border:none;background:none;padding:4px 11px;border-radius:6px;font-size:12px;color:var(--muted)}
+.seg button.on{background:var(--surface);color:var(--text);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.07)}
+.inline-check{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer}
+.inline-check input{width:auto;margin:0}
+.range-hint{font-size:11.5px;color:var(--muted);margin-left:auto}
+.media-badges{display:inline-flex;gap:4px;flex-wrap:wrap}
+.media-badge{font-size:10.5px;font-weight:500;padding:0 6px;border-radius:999px;border:1px solid var(--line);color:var(--muted);background:#f7faf8}
+.media-badge.photo{background:#eaf3fb;border-color:#cfe2f2;color:#2f5f86}
+.media-badge.video{background:#f3eefb;border-color:#ded2f0;color:#5a4680}
+.media-badge.audio{background:var(--clue-bg);border-color:var(--clue-line);color:var(--clue-text)}
+.media-badge.transcript,.media-badge.summary{background:#eef4f1;border-color:#d5e5dd;color:#2e5f50}
+.media-badge.unknown{background:#f4f5f4}
+.tl-untitled{color:var(--muted);font-style:italic;font-weight:500}
+.tl-evidence{margin-top:10px;padding:8px 11px;border:1px dashed #cbd6d1;border-radius:8px;background:#fafcfb;display:grid;gap:6px}
+.ev-row{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline;font-size:12px;color:var(--muted)}
+.ev-meta{font-size:11.5px}
+.ev-excerpt{margin:0;font-size:12.5px;line-height:1.7;color:#4a554f;white-space:pre-wrap}
+.ev-infer{display:inline-block;margin-right:6px;font-size:10.5px;color:var(--clue-text);background:var(--clue-bg);border:1px dashed var(--clue-line);border-radius:999px;padding:0 6px}
+.agg-row{display:grid;grid-template-columns:104px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);text-align:left}
+.agg-row:hover{border-color:#c3d6cd;background:#fbfdfc}
+.agg-date{font-size:12.5px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums;white-space:nowrap}
+.agg-main{min-width:0;font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agg-meta{font-size:11.5px;color:var(--muted);white-space:nowrap}
+@media(max-width:600px){
+  .tl-item{grid-template-columns:52px minmax(0,1fr);gap:10px}
+  .tl-tools{gap:6px}
+  .agg-row{grid-template-columns:92px minmax(0,1fr)}
+  .agg-meta{display:none}
+}
+
 /* ---------- 当天时间轴目录 ---------- */
 .outline{display:grid;gap:1px;max-height:46vh;overflow:auto}
 .out-row{
@@ -173,10 +243,20 @@ dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
 <header class="topbar">
   <div class="brand"><span class="logo">◔</span><h1>Looki 日程</h1><span class="status" id="status">正在读取同步状态…</span></div>
   <nav class="tabs"><button class="tab active" id="tabPlan">日程</button><button class="tab" id="tabSettings">设置</button></nav>
-  <div class="acts"><button class="primary" id="sync">立即同步</button></div>
+  <div class="acts"><button class="icon" id="sideToggle" aria-controls="sidePanel" aria-expanded="true" title="日历与目录">▤</button><button class="primary" id="sync">立即同步</button></div>
 </header>
 
 <main class="layout" id="viewPlan">
+  <section class="card initial-import" id="initialImport" hidden>
+    <h2>是否导入 Looki 历史日程？</h2>
+    <p class="meta" id="initialImportRange"></p>
+    <p class="meta">保存 API Key 不会自动导入。选择“暂不导入”不会在此次操作中请求 Looki，之后仍可使用“立即同步”。</p>
+    <div class="initial-actions">
+      <button class="primary" id="initialImportYes">导入历史日程</button>
+      <button class="icon" id="initialImportSkip">暂不导入</button>
+    </div>
+    <p class="initial-message" id="initialImportMessage" hidden></p>
+  </section>
   <section class="card">
     <div class="card-head">
       <div><h2 id="dayTitle"></h2><p class="meta" id="dayMeta"></p></div>
@@ -187,28 +267,39 @@ dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
         <button class="primary" id="add">补录</button>
       </div>
     </div>
+    <div class="tl-tools">
+      <div class="seg" id="scaleSwitch"><button type="button" data-scale="day" class="on">日</button><button type="button" data-scale="week">周</button><button type="button" data-scale="month">月</button></div>
+      <div class="seg" id="mediaFilters"><button type="button" data-media="all" class="on">全部</button><button type="button" data-media="photo">照片</button><button type="button" data-media="video">视频</button><button type="button" data-media="audio">音频</button><button type="button" data-media="transcript">摘要/转写</button></div>
+      <label class="inline-check"><input type="checkbox" id="onlyEvidence">仅有证据</label>
+      <span class="range-hint">周/月为聚合视图，点击某天进入日视图</span>
+    </div>
     <div class="timeline" id="timeline"></div>
   </section>
 
-  <aside class="side">
-    <section class="card">
-      <div class="cal-head">
-        <h2 id="calTitle"></h2>
-        <div class="head-acts">
-          <button class="icon" id="mPrev" title="上一月">‹</button>
-          <button class="icon" id="mToday" title="回到本月">•</button>
-          <button class="icon" id="mNext" title="下一月">›</button>
+  <aside class="side" id="sidePanel" aria-label="日历与当天时间轴">
+    <div class="side-head"><h2>日历与目录</h2><button class="icon" id="sideClose" title="收起侧栏">×</button></div>
+    <div class="side-body">
+      <section class="card">
+        <div class="cal-head">
+          <h2 id="calTitle"></h2>
+          <div class="head-acts">
+            <button class="icon" id="mPrev" title="上一月">‹</button>
+            <button class="icon" id="mToday" title="回到本月">•</button>
+            <button class="icon" id="mNext" title="下一月">›</button>
+          </div>
         </div>
-      </div>
-      <div class="cal-grid" id="calGrid"></div>
-      <div class="legend"><i></i>黄点表示当天有日程记录（最多 5 个）</div>
-    </section>
+        <div class="cal-grid" id="calGrid"></div>
+        <div class="legend"><i></i>黄点表示当天有日程记录（最多 5 个）</div>
+      </section>
 
-    <section class="card">
-      <div class="card-head"><h2>当天时间轴</h2><span class="hint">单击跳转到对应时段</span></div>
-      <div class="outline" id="outline"></div>
-    </section>
+      <section class="card">
+        <div class="card-head"><h2>当天时间轴</h2><span class="hint">单击跳转到对应时段</span></div>
+        <div class="outline" id="outline"></div>
+      </section>
+    </div>
+    <div class="side-foot">未来扩展区域</div>
   </aside>
+  <div class="side-backdrop" id="sideBackdrop"></div>
 </main>
 
 <main class="card settings" id="viewSettings" hidden>
@@ -241,7 +332,7 @@ dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
     <label id="fieldImageApiKey">兼容接口 API Key<input id="cfgImageApiKey" type="password" autocomplete="off"><small>保持掩码不修改，留空保存可清除；无密钥接口可留空</small></label>
   </div>
   <div class="checks">
-    <label class="check"><input id="cfgAuto" type="checkbox"><span>自动后台同步<small>插件启动后立即同步一次，此后按间隔轮询</small></span></label>
+    <label class="check"><input id="cfgAuto" type="checkbox"><span>自动后台同步<small>按设定间隔轮询；首次连接需先完成历史日程导入选择</small></span></label>
     <label class="check"><input id="cfgGroup" type="checkbox"><span>在群聊中开放查询<small>总开关默认关闭；白名单成员和白名单群无需开启此项</small></span></label>
     <label class="check"><input id="cfgImageOriginal" type="checkbox"><span>直接发送选中的原图<small>关闭时进行图生图；两种模式都会先由模型从候选图中挑选 1 张</small></span></label>
     <label class="check"><input id="cfgRaw" type="checkbox"><span>保存远端原始 JSON<small>含隐私原文，默认关闭，仅供调试</small></span></label>
@@ -271,9 +362,28 @@ const localDT=s=>{const d=new Date(s);return `${d.getFullYear()}-${pad(d.getMont
 const todayStr=()=>fmt(new Date());
 const WEEK='日一二三四五六';
 
-let calY,calM,day=todayStr(),items=[],selectedId=null,syncing=false;
+let calY,calM,day=todayStr(),items=[],selectedId=null,syncing=false,initialImportBusy=false,scale='day',mediaFilter='all',onlyEvidence=false,evidence={};
 {const n=new Date();calY=n.getFullYear();calM=n.getMonth()+1}
 const dialog=$('editor'),form=dialog.querySelector('form');
+
+/* ---------- 右侧栏：收起 / 拉出 ---------- */
+const sideEl=$('sidePanel'),sideBtn=$('sideToggle'),sideBackdrop=$('sideBackdrop');
+const narrow=()=>window.matchMedia('(max-width:960px)').matches;
+let sideOpen=!narrow();
+function setSide(open,lockScroll=true){
+  sideOpen=open;
+  $('viewPlan').classList.toggle('side-hidden',!narrow()&&!open);
+  sideEl.classList.toggle('open',open);
+  sideBackdrop.classList.toggle('show',narrow()&&open);
+  sideBtn.setAttribute('aria-expanded',String(open));
+  document.body.classList.toggle('side-lock',narrow()&&open&&lockScroll);
+}
+sideBtn.onclick=()=>setSide(!sideOpen);
+$('sideClose').onclick=()=>setSide(false);
+sideBackdrop.onclick=()=>setSide(false);
+addEventListener('keydown',e=>{if(e.key==='Escape'&&narrow()&&sideOpen)setSide(false)});
+addEventListener('resize',()=>setSide(sideOpen,false));
+setSide(sideOpen);
 
 /* ---------- 标签页 ---------- */
 function switchTab(settings){
@@ -281,6 +391,7 @@ function switchTab(settings){
   $('tabSettings').classList.toggle('active',settings);
   $('viewPlan').hidden=settings;
   $('viewSettings').hidden=!settings;
+  if(settings&&narrow())setSide(false);
 }
 $('tabPlan').onclick=()=>switchTab(false);
 $('tabSettings').onclick=async()=>{switchTab(true);await loadConfig()};
@@ -306,31 +417,100 @@ async function loadCalendar(){
     }else if(s===todayStr()){cell.title='今天（暂无数据）'}
     cell.onclick=()=>{
       if(out){calY=d.getFullYear();calM=d.getMonth()+1}
-      day=s;selectedId=null;loadCalendar();loadDay();
+      day=s;selectedId=null;
+      if(scale!=='day'){scale='day';syncScaleUI()}
+      loadCalendar();loadPlan();
     };
     grid.append(cell);
   }
 }
-$('mPrev').onclick=()=>{calM--;if(calM<1){calM=12;calY--}loadCalendar()};
-$('mNext').onclick=()=>{calM++;if(calM>12){calM=1;calY++}loadCalendar()};
-$('mToday').onclick=()=>{const n=new Date();calY=n.getFullYear();calM=n.getMonth()+1;day=todayStr();selectedId=null;loadCalendar();loadDay()};
+$('mPrev').onclick=()=>{calM--;if(calM<1){calM=12;calY--}loadCalendar();if(scale==='month')loadPlan()};
+$('mNext').onclick=()=>{calM++;if(calM>12){calM=1;calY++}loadCalendar();if(scale==='month')loadPlan()};
+$('mToday').onclick=()=>{const n=new Date();calY=n.getFullYear();calM=n.getMonth()+1;day=todayStr();selectedId=null;loadCalendar();loadPlan()};
 
-/* ---------- 时间轴 ---------- */
+/* ---------- 视图、筛选与时间轴 ---------- */
+const parseDay=s=>new Date(`${s}T00:00:00`);
+const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x};
+const mediaLabel=t=>({photo:'照片',video:'视频',audio:'音频',transcript:'转写',summary:'摘要',unknown:'未知'}[t]||String(t||'未知'));
+const syncCalToDay=()=>{const d=parseDay(day);calY=d.getFullYear();calM=d.getMonth()+1};
+const emptyBox=text=>{const el=document.createElement('div');el.className='empty';el.textContent=text;return el};
+function syncScaleUI(){for(const b of $('scaleSwitch').children)b.classList.toggle('on',b.dataset.scale===scale)}
+function setScale(next){scale=next;syncScaleUI();if(scale!=='day')syncCalToDay();loadPlan()}
+function mediaBadge(type){const el=document.createElement('span');el.className='media-badge '+(type||'unknown');el.textContent=mediaLabel(type);return el}
+function mediaTypes(item){
+  const set=new Set((item.media_types||[]).filter(t=>t&&t!=='unknown'));
+  for(const row of (evidence[item.looki_id]||[]))if(row.media_type&&row.media_type!=='unknown')set.add(row.media_type);
+  return [...set];
+}
+function allMediaTypes(item,counts){
+  const set=new Set(mediaTypes(item));
+  if(counts)for(const t of Object.keys(counts))if(t&&t!=='unknown')set.add(t);
+  return [...set];
+}
+function matches(item,counts){
+  const types=allMediaTypes(item,counts);
+  if(mediaFilter!=='all'){
+    const wanted=mediaFilter==='transcript'?['transcript','summary']:[mediaFilter];
+    if(!types.some(t=>wanted.includes(t)))return false;
+  }
+  return !onlyEvidence||types.length>0;
+}
+function mediaBadges(item,counts){
+  const wrap=document.createElement('span');wrap.className='media-badges';
+  const types=allMediaTypes(item,counts);
+  if(!types.length)wrap.append(mediaBadge('unknown'));
+  else for(const t of types)wrap.append(mediaBadge(t));
+  return wrap;
+}
+function evidenceBox(entries){
+  const box=document.createElement('div');box.className='tl-evidence';box.hidden=true;
+  for(const entry of entries){
+    const row=document.createElement('div');row.className='ev-row';
+    row.append(mediaBadge(entry.media_type||'unknown'));
+    const bits=[];
+    if(entry.width&&entry.height)bits.push(`${entry.width}×${entry.height}`);
+    if(entry.duration_ms)bits.push(`${Math.round(entry.duration_ms/1000)} 秒`);
+    if(entry.mime_type)bits.push(entry.mime_type);
+    if(entry.has_thumbnail)bits.push('有缩略图');
+    if(entry.availability==='denied')bits.push('不可直接访问');
+    if(entry.availability==='unsupported')bits.push('类型暂不支持');
+    const meta=document.createElement('span');meta.className='ev-meta';meta.textContent=bits.join(' · ');
+    row.append(meta);box.append(row);
+    if(entry.text_excerpt){
+      const p=document.createElement('p');p.className='ev-excerpt';
+      const tag=document.createElement('span');tag.className='ev-infer';tag.textContent='摘要推测 · 非原始录音';
+      p.append(tag);
+      p.append(document.createTextNode(entry.text_excerpt));
+      box.append(p);
+    }
+  }
+  return box;
+}
+async function loadPlan(){
+  if(scale==='week')return loadWeek();
+  if(scale==='month')return loadMonth();
+  return loadDay();
+}
+
 async function loadDay(){
-  const d=new Date(`${day}T00:00:00`);
+  const d=parseDay(day);
   $('dayTitle').textContent=`${day} 周${WEEK[d.getDay()]}`;
   const tl=$('timeline');tl.replaceChildren();
+  items=[];evidence={};
   try{items=await bridge.apiGet('events',{start:day,end:day})}catch(e){items=[]}
   if(!Array.isArray(items))items=[];
-  $('dayMeta').textContent=items.length?`共 ${items.length} 条记录`:'';
+  try{const data=await bridge.apiGet('media',{start:day,end:day});if(data&&typeof data==='object')evidence=data}catch(e){}
+  const visible=items.filter(item=>matches(item));
+  $('dayMeta').textContent=items.length?`共 ${items.length} 条记录${visible.length!==items.length?` · 筛选后 ${visible.length} 条`:''}`:'';
   if(!items.length){
-    const empty=document.createElement('div');empty.className='empty';empty.textContent='这一天没有日程记录';tl.append(empty);
+    tl.append(emptyBox('这一天没有日程记录'));
     if(selectedId!==null){selectedId=null}
     renderOutline([]);
     return;
   }
-  if(!items.some(x=>x.id===selectedId))selectedId=null;
-  for(const item of items)tl.append(timelineItem(item));
+  if(!visible.length){tl.append(emptyBox('没有符合当前筛选条件的记录'));renderOutline([]);return}
+  if(!visible.some(x=>x.id===selectedId))selectedId=null;
+  for(const item of visible)tl.append(timelineItem(item));
 
   if(day===todayStr()){
     const lastEnd=items.reduce((m,x)=>Math.max(m,new Date(x.end_at).getTime()),0);
@@ -341,7 +521,59 @@ async function loadDay(){
       tl.append(rec);
     }
   }
-  renderOutline(items);
+  renderOutline(visible);
+}
+
+async function loadWeek(){
+  const d=parseDay(day),monday=addDays(d,-((d.getDay()+6)%7));
+  const start=fmt(monday),end=fmt(addDays(monday,6));
+  $('dayTitle').textContent=`${start} ~ ${end} · 周`;
+  const tl=$('timeline');tl.replaceChildren();
+  items=[];evidence={};
+  let counts={};
+  try{items=await bridge.apiGet('events',{start,end})}catch(e){items=[]}
+  if(!Array.isArray(items))items=[];
+  try{counts=await bridge.apiGet('media-summary',{start,end})}catch(e){counts={}}
+  const visible=items.filter(item=>matches(item,counts[item.looki_id]));
+  $('dayMeta').textContent=items.length?`本周共 ${items.length} 条记录${visible.length!==items.length?` · 筛选后 ${visible.length} 条`:''}`:'';
+  if(!visible.length){tl.append(emptyBox('这一周没有符合条件的记录'));renderOutline([]);return}
+  const byDay={};
+  for(const item of visible)(byDay[item.date]||=[]).push(item);
+  for(const dateStr of Object.keys(byDay).sort()){
+    const rows=byDay[dateStr],dd=parseDay(dateStr);
+    const btn=document.createElement('button');btn.type='button';btn.className='agg-row';
+    const date=document.createElement('span');date.className='agg-date';date.textContent=`${dateStr} 周${WEEK[dd.getDay()]}`;
+    const main=document.createElement('span');main.className='agg-main';
+    main.textContent=`${rows.length} 条 · ${rows.slice(0,3).map(x=>x.title||'未命名记录').join(' / ')}`;
+    const meta=document.createElement('span');meta.className='agg-meta';
+    meta.textContent=`${hhmm(rows[0].start_at)}–${hhmm(rows[rows.length-1].end_at)}`;
+    btn.append(date,main,meta);
+    btn.onclick=()=>{day=dateStr;syncCalToDay();setScale('day');loadCalendar()};
+    tl.append(btn);
+  }
+  renderOutline(visible);
+}
+
+async function loadMonth(){
+  $('dayTitle').textContent=`${calY} 年 ${calM} 月 · 月`;
+  const tl=$('timeline');tl.replaceChildren();
+  let density={};try{density=await bridge.apiGet('density',{year:calY,month:calM})}catch(e){}
+  if(!density||typeof density!=='object')density={};
+  const dates=Object.keys(density).sort();
+  const total=dates.reduce((sum,s)=>sum+(density[s]||0),0);
+  $('dayMeta').textContent=dates.length?`本月 ${dates.length} 天有记录，共 ${total} 条`:'';
+  if(!dates.length){tl.append(emptyBox('这个月还没有记录'));renderOutline([]);return}
+  for(const dateStr of dates){
+    const dd=parseDay(dateStr),count=density[dateStr]||0;
+    const btn=document.createElement('button');btn.type='button';btn.className='agg-row';
+    const date=document.createElement('span');date.className='agg-date';date.textContent=`${dateStr} 周${WEEK[dd.getDay()]}`;
+    const main=document.createElement('span');main.className='agg-main';main.textContent=`${count} 条记录`;
+    const meta=document.createElement('span');meta.className='agg-meta';meta.textContent='进入日视图';
+    btn.append(date,main,meta);
+    btn.onclick=()=>{day=dateStr;calY=dd.getFullYear();calM=dd.getMonth()+1;setScale('day');loadCalendar()};
+    tl.append(btn);
+  }
+  renderOutline([]);
 }
 
 function timelineItem(item){
@@ -356,12 +588,21 @@ function timelineItem(item){
 
   const body=document.createElement('div');body.className='tl-body';
   const titleRow=document.createElement('div');titleRow.className='tl-title';
-  const title=document.createElement('span');title.textContent=item.title;titleRow.append(title);
+  const title=document.createElement('span');
+  if(item.title){title.textContent=item.title}
+  else{title.className='tl-untitled';title.textContent='未命名记录'}
+  titleRow.append(title,mediaBadges(item));
   if(item.source==='manual'){
     const badge=document.createElement('span');badge.className='badge manual';badge.textContent='手动';titleRow.append(badge);
   }
 
+  const entries=evidence[item.looki_id]||[];
   const ops=document.createElement('span');ops.className='tl-ops';
+  if(entries.length){
+    const evBtn=document.createElement('button');evBtn.type='button';evBtn.className='ghost';evBtn.textContent='证据';
+    evBtn.onclick=e=>{e.stopPropagation();const box=row.querySelector('.tl-evidence');if(box)box.hidden=!box.hidden};
+    ops.append(evBtn);
+  }
   const editBtn=document.createElement('button');editBtn.type='button';editBtn.className='ghost';editBtn.textContent='编辑';
   editBtn.onclick=e=>{e.stopPropagation();edit(item)};
   ops.append(editBtn);titleRow.append(ops);
@@ -380,7 +621,7 @@ function timelineItem(item){
   }
   if(item.audio_summary){
     const box=document.createElement('div');box.className='tl-audio';
-    const tag=document.createElement('div');tag.className='tl-audio-tag';tag.textContent='音频摘要 · Looki 捕捉';
+    const tag=document.createElement('div');tag.className='tl-audio-tag';tag.textContent='音频摘要 · Looki 生成（不是原始录音）';
     const p=document.createElement('p');p.textContent=item.audio_summary;
     box.append(tag,p);body.append(box);
   }
@@ -397,6 +638,7 @@ function timelineItem(item){
     }
     body.append(box);
   }
+  if(entries.length)body.append(evidenceBox(entries));
   row.append(time,body);
   row.onclick=()=>select(item.id,false);
   return row;
@@ -430,9 +672,26 @@ function renderOutline(items){
   }
 }
 
-$('dPrev').onclick=()=>{const d=new Date(`${day}T00:00:00`);d.setDate(d.getDate()-1);day=fmt(d);selectedId=null;loadCalendar();loadDay()};
-$('dNext').onclick=()=>{const d=new Date(`${day}T00:00:00`);d.setDate(d.getDate()+1);day=fmt(d);selectedId=null;loadCalendar();loadDay()};
-$('dToday').onclick=()=>{day=todayStr();selectedId=null;loadCalendar();loadDay()};
+function step(dir){
+  if(scale==='month'){
+    calM+=dir;if(calM<1){calM=12;calY--}else if(calM>12){calM=1;calY++}
+    loadCalendar();loadPlan();return;
+  }
+  const d=parseDay(day);d.setDate(d.getDate()+(scale==='week'?7*dir:dir));
+  day=fmt(d);syncCalToDay();selectedId=null;loadCalendar();loadPlan();
+}
+for(const b of $('scaleSwitch').children)b.onclick=()=>setScale(b.dataset.scale);
+for(const b of $('mediaFilters').children){
+  b.onclick=()=>{
+    mediaFilter=b.dataset.media;
+    for(const x of $('mediaFilters').children)x.classList.toggle('on',x===b);
+    loadPlan();
+  };
+}
+$('onlyEvidence').onchange=e=>{onlyEvidence=e.target.checked;loadPlan()};
+$('dPrev').onclick=()=>step(-1);
+$('dNext').onclick=()=>step(1);
+$('dToday').onclick=()=>{day=todayStr();syncCalToDay();selectedId=null;loadCalendar();loadPlan()};
 
 /* ---------- 编辑 / 补录 / 删除 ---------- */
 function edit(item){
@@ -464,7 +723,7 @@ $('save').onclick=async e=>{
   };
   try{
     await bridge.apiPost(selectedId?`events/${selectedId}/update`:'events',value);
-    dialog.close();loadCalendar();loadDay();
+    dialog.close();loadCalendar();loadPlan();
   }catch(err){alert('保存失败：'+(err?.message||err))}
 };
 async function removeItem(item){
@@ -474,7 +733,7 @@ async function removeItem(item){
     await bridge.apiPost(`events/${item.id}/delete`,{});
     selectedId=null;
     if(dialog.open)dialog.close();
-    loadCalendar();loadDay();
+    loadCalendar();loadPlan();
   }catch(err){alert('删除失败：'+(err?.message||err))}
 }
 $('delete').onclick=()=>{
@@ -486,13 +745,44 @@ $('delete').onclick=()=>{
 $('sync').onclick=async()=>{
   if(syncing)return;
   syncing=true;$('sync').disabled=true;$('sync').textContent='同步中…';
-  try{await bridge.apiPost('sync',{});await status();loadCalendar();loadDay()}
-  catch(err){alert('同步失败：'+(err?.message||err))}
+  try{
+    const result=await bridge.apiPost('sync',{});
+    if(result.error)throw new Error(result.error);
+    await status();loadCalendar();loadPlan();
+  }catch(err){alert('同步失败：'+(err?.message||err))}
   finally{syncing=false;$('sync').disabled=false;$('sync').textContent='立即同步'}
 };
+function renderInitialImport(s){
+  $('initialImport').hidden=!s.initial_import_required;
+  if(!s.initial_import_required)return;
+  $('initialImportRange').textContent=`将读取最近 ${s.backfill_days||7} 天的结构化日程，时区为 ${s.timezone||'Asia/Shanghai'}。`;
+}
+function setInitialImportBusy(busy){
+  initialImportBusy=busy;
+  $('initialImportYes').disabled=busy;$('initialImportSkip').disabled=busy;
+  $('initialImportYes').textContent=busy?'正在导入…':'导入历史日程';
+}
+async function chooseInitialImport(choice){
+  if(initialImportBusy)return;
+  setInitialImportBusy(true);
+  $('initialImportMessage').hidden=true;$('initialImportMessage').textContent='';
+  try{
+    const result=await bridge.apiPost('initial-import',{choice});
+    if(choice==='import'&&result.error)throw new Error(result.error);
+    if(choice==='import'&&result.initial_import_required)throw new Error(result.skipped?'另一个同步任务正在进行，请稍后重试。':'导入尚未完成，请重试。');
+    await status();
+    if(choice==='import')await Promise.all([loadCalendar(),loadPlan()]);
+  }catch(err){
+    $('initialImportMessage').textContent='操作未完成：'+(err?.message||err);
+    $('initialImportMessage').hidden=false;
+  }finally{setInitialImportBusy(false)}
+}
+$('initialImportYes').onclick=()=>chooseInitialImport('import');
+$('initialImportSkip').onclick=()=>chooseInitialImport('skip');
 async function status(){
   try{
     const s=await bridge.apiGet('status');
+    renderInitialImport(s);
     const el=$('status');
     el.textContent=`最近成功：${s.last_success?new Date(s.last_success).toLocaleString('zh-CN'):'无'} · 最新数据：${s.latest_event?new Date(s.latest_event).toLocaleDateString('zh-CN'):'无'}`;
     el.classList.toggle('err',!!s.last_error);
@@ -584,6 +874,6 @@ $('cfgSave').onclick=async()=>{
   catch(err){alert('保存失败：'+(err?.message||err))}
 };
 
-await Promise.all([loadCalendar(),loadDay(),status()]);
+await Promise.all([loadCalendar(),loadPlan(),status()]);
 </script>
 </body></html>

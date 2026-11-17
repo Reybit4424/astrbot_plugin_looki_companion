@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta
@@ -56,7 +57,7 @@ class LookiProviderTests(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["start"], "2026-10-25T09:00:00+08:00")
         # description / audio_summary 是独立字段（不合并入 title/keywords），0.5.1 起加入 fetch 结果
-        self.assertEqual(set(items[0]), {"looki_id", "date", "start", "end", "title", "keywords", "description", "audio_summary", "raw_json"})
+        self.assertEqual(set(items[0]), {"looki_id", "date", "start", "end", "title", "keywords", "description", "audio_summary", "raw_json", "media_types", "capture_mode"})
         self.assertEqual(items[0]["description"], "不应进入日程事实")  # description 原样保留，不混入 title
         self.assertEqual(items[0]["audio_summary"], "课堂录音摘要")
         self.assertNotIn("不应进入日程事实", items[0]["title"])
@@ -342,6 +343,76 @@ class ScheduleStoreTests(unittest.TestCase):
         ver = self.store.db.execute("PRAGMA user_version").fetchone()[0]
         self.assertEqual(ver, SCHEMA_VERSION)
 
+    def test_v1_database_migrates_in_place_without_data_loss(self):
+        path = Path(self.temp.name) / "legacy.sqlite3"
+        legacy = sqlite3.connect(path)
+        legacy.executescript("""
+            CREATE TABLE schedules (
+                id TEXT PRIMARY KEY, dedupe_key TEXT UNIQUE NOT NULL,
+                looki_id TEXT, day TEXT NOT NULL, start_at TEXT NOT NULL, end_at TEXT NOT NULL,
+                title TEXT NOT NULL, keywords TEXT NOT NULL, source TEXT NOT NULL,
+                user_edited INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0,
+                raw_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            CREATE TABLE sync_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            PRAGMA user_version=1;
+            INSERT INTO schedules VALUES (
+                'old-id','looki:old-remote','old-remote','2026-10-25',
+                '2026-10-25T09:00:00+08:00','2026-10-25T10:00:00+08:00',
+                '用户改过的标题','[]','looki',1,0,NULL,'2026-10-25T01:00:00+00:00','2026-10-25T02:00:00+00:00'
+            );
+        """)
+        legacy.commit()
+        legacy.close()
+
+        migrated = ScheduleStore(path)
+        try:
+            row = migrated.query("2026-10-25", "2026-10-25")[0]
+            self.assertEqual(row["id"], "old-id")
+            self.assertEqual(row["title"], "用户改过的标题")
+            self.assertTrue(row["user_edited"])
+            self.assertEqual(migrated.db.execute("PRAGMA user_version").fetchone()[0], 6)
+        finally:
+            migrated.close()
+
+    def test_reopen_preserves_edits_deletions_corrections_media_and_sync_state(self):
+        path = Path(self.temp.name) / "reopen.sqlite3"
+        store = ScheduleStore(path)
+        store.upsert_remote([
+            self.item(looki_id="keep", title="人工标题"),
+            self.item(looki_id="deleted", title="删除记录", start="2026-10-25T12:00:00+08:00", end="2026-10-25T13:00:00+08:00"),
+        ])
+        rows = store.query("2026-10-25", "2026-10-25")
+        kept = next(row for row in rows if row["looki_id"] == "keep")
+        deleted = next(row for row in rows if row["looki_id"] == "deleted")
+        store.save({
+            "date": kept["date"], "start": kept["start_at"], "end": kept["end_at"],
+            "title": "用户修改后的标题", "keywords": kept["keywords"],
+        }, kept["id"])
+        store.add_correction(kept["id"], "保留这条对话校正")
+        store.delete(deleted["id"])
+        store.sync_media_evidence("keep", [{
+            "evidence_key": "photo-1", "media_type": "photo",
+            "remote_file_id": "file-1", "has_thumbnail": True,
+        }])
+        store.set_meta("last_success", "2026-10-25T12:00:00+08:00")
+        store.set_meta("initial_import_choice", "skipped")
+        store.db.execute("PRAGMA user_version=5")
+        store.db.commit()
+        store.close()
+
+        self.store.close()
+        self.store = ScheduleStore(path)
+        row = self.store.query("2026-10-25", "2026-10-25")[0]
+        self.assertEqual(row["title"], "用户修改后的标题")
+        self.assertTrue(row["user_edited"])
+        self.assertEqual([item["note"] for item in row["corrections"]], ["保留这条对话校正"])
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM schedules WHERE deleted=1 AND looki_id='deleted'").fetchone()[0], 1)
+        self.assertEqual(self.store.db.execute("SELECT remote_file_id FROM media_evidence WHERE schedule_id=?", (kept["id"],)).fetchone()[0], "file-1")
+        self.assertEqual(self.store.meta()["initial_import_choice"], "skipped")
+        self.assertEqual(self.store.meta()["last_success"], "2026-10-25T12:00:00+08:00")
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 6)
+
     def test_clues_timezone_param_used(self):
         """clues() 使用传入 timezone 而非服务器本地时区"""
         from datetime import date, timedelta
@@ -497,6 +568,41 @@ class ScheduleStoreTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["source"], "manual")
 
+    def test_upsert_strips_task_box_and_heading_markers(self):
+        """Looki 文本里的 Markdown 任务框与标题符号不得进入本地日程"""
+        self.store.upsert_remote([self.item(title="# 阅读", description="- [ ] 打开课本", audio_summary="## 摘要\n- 记录")])
+        row = self.store.query("2026-10-25", "2026-10-25")[0]
+        self.assertEqual(row["title"], "阅读")
+        self.assertEqual(row["description"], "打开课本")
+        self.assertEqual(row["audio_summary"], "摘要\n- 记录")
+
+    def test_resplit_looki_segments_are_merged(self):
+        """Looki 先下发短片段、再合并成长片段时，只保留跨度最大的一条"""
+        self._insert_raw("d", "2026-10-25T08:44:00+08:00", title="晨间自习与同桌讨论", duration=(7, 14, 7, 42))
+        self._insert_raw("a", "2026-10-25T10:00:00+08:00", title="早晨抵达教室", duration=(7, 8, 7, 12))
+        self._insert_raw("b", "2026-10-25T23:13:00+08:00", title="清晨教室里的漫长自习", duration=(7, 8, 11, 59))
+        self._insert_raw("c", "2026-10-25T14:15:00+08:00", title="教室里的漫长自习", duration=(7, 14, 11, 59))
+        self.assertEqual(self.store.merge_superseded_looki_rows(), 3)
+        rows = self.store.query("2026-10-25", "2026-10-25")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["looki_id"], "b")
+
+    def test_adjacent_activities_are_not_merged(self):
+        """首尾相接但没有重叠的活动不得合并"""
+        self._insert_raw("a", "2026-10-25T10:00:00+08:00", duration=(9, 0, 10, 0))
+        self._insert_raw("b", "2026-10-25T10:10:00+08:00", title="另一件事", duration=(10, 0, 11, 0))
+        self.assertEqual(self.store.merge_superseded_looki_rows(), 0)
+        self.assertEqual(len(self.store.query("2026-10-25", "2026-10-25")), 2)
+
+    def test_resplit_merge_skips_edited_and_manual_rows(self):
+        """人工编辑过或手工新建的记录不参与重切分合并"""
+        self._insert_raw("a", "2026-10-25T10:00:00+08:00", duration=(7, 8, 7, 12), user_edited=1)
+        self._insert_raw("b", "2026-10-25T10:30:00+08:00", duration=(7, 8, 11, 59))
+        self._insert_raw("m", "2026-10-25T10:40:00+08:00", duration=(7, 14, 11, 59), source="manual", user_edited=1)
+        self.assertEqual(self.store.merge_superseded_looki_rows(), 0)
+        self.assertEqual(len(self.store.query("2026-10-25", "2026-10-25")), 3)
+
+
     def test_raw_json_survives_sync_with_store_raw_disabled(self):
         """关闭原始 JSON 存储后再次同步，不应抹掉已保存的 raw_json"""
         self.store.upsert_remote([self.item()], store_raw=True)
@@ -530,6 +636,168 @@ class EventPayloadTests(unittest.TestCase):
         self.assertEqual(payload["end"], "2026-10-25T22:30:00+08:00")
 
 
+class InitialImportTests(unittest.TestCase):
+    def setUp(self):
+        from astrbot_plugin_looki_companion.main import LookiCompanionPlugin
+
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp.name) / "schedules.sqlite3"
+        self.plugin = LookiCompanionPlugin.__new__(LookiCompanionPlugin)
+        self.plugin.config = {
+            "looki_api_key": "same-key",
+            "looki_base_url": "https://open.looki.tech/api/v1",
+            "backfill_days": 7,
+            "timezone": "Asia/Shanghai",
+            "auto_sync": False,
+            "sync_interval_minutes": 5,
+            "image_send_original": True,
+        }
+        self.plugin.context = SimpleNamespace(get_all_providers=lambda: [])
+        self.plugin.store = ScheduleStore(self.db_path)
+        self.plugin._sync_lock = asyncio.Lock()
+        self.plugin._sync_task = None
+        self.plugin._stopping = False
+        self.plugin.schedule_provider = SimpleNamespace(fetch=AsyncMock(return_value=[]))
+        self.plugin._sync_media_evidence = AsyncMock()
+
+    def tearDown(self):
+        self.plugin.store.close()
+        self.temp.cleanup()
+
+    async def choose(self, choice):
+        with patch(
+            "astrbot_plugin_looki_companion.main.request",
+            SimpleNamespace(json=AsyncMock(return_value={"choice": choice}), query={}),
+        ), patch(
+            "astrbot_plugin_looki_companion.main.json_response",
+            side_effect=lambda data: data,
+        ), patch(
+            "astrbot_plugin_looki_companion.main.error_response",
+            side_effect=lambda message, status_code: {"error": message, "status_code": status_code},
+        ):
+            return await self.plugin.api_initial_import()
+
+    def state(self):
+        return asyncio.run(self.plugin._initial_import_state())
+
+    def test_no_key_does_not_prompt_and_automatic_sync_waits_for_choice(self):
+        async def run():
+            self.plugin.config["looki_api_key"] = ""
+            self.assertFalse((await self.plugin._initial_import_state())["initial_import_required"])
+
+            self.plugin.config["looki_api_key"] = "same-key"
+            result = await self.plugin.sync_once(automatic=True)
+            self.assertTrue(result["skipped"])
+            self.assertTrue(result["initial_import_required"])
+            self.plugin.schedule_provider.fetch.assert_not_awaited()
+            self.assertNotIn("last_attempt", self.plugin.store.meta())
+
+        asyncio.run(run())
+
+    def test_skip_is_global_permanent_and_key_changes_do_not_prompt_again(self):
+        result = asyncio.run(self.choose("skip"))
+        self.assertTrue(result["saved"])
+        self.assertEqual(result["initial_import_choice"], "skipped")
+        self.plugin.schedule_provider.fetch.assert_not_awaited()
+        self.plugin._sync_media_evidence.assert_not_awaited()
+
+        # 重新打开同一个数据库模拟插件重载，选择仍然保留。
+        self.plugin.store.close()
+        self.plugin.store = ScheduleStore(self.db_path)
+        for key in ("", "same-key", "different-key", "same-key"):
+            self.plugin.config["looki_api_key"] = key
+            self.assertFalse(self.state()["initial_import_required"])
+            self.assertEqual(self.state()["initial_import_choice"], "skipped")
+        self.plugin.schedule_provider.fetch.assert_not_awaited()
+
+    def test_existing_successfully_synced_user_is_not_prompted(self):
+        self.plugin.store.set_meta("last_success", datetime.now().astimezone().isoformat())
+        self.assertFalse(self.state()["initial_import_required"])
+        result = asyncio.run(self.choose("import"))
+        self.assertTrue(result["completed"])
+        self.plugin.schedule_provider.fetch.assert_not_awaited()
+
+    def test_import_uses_existing_sync_and_only_marks_choice_after_success(self):
+        self.plugin.schedule_provider.fetch = AsyncMock(return_value=[{
+            "looki_id": "initial-1",
+            "date": datetime.now().astimezone().date().isoformat(),
+            "start": "2026-11-17T09:00:00+08:00",
+            "end": "2026-11-17T10:00:00+08:00",
+            "title": "首次导入",
+            "keywords": [],
+        }])
+        result = asyncio.run(self.choose("import"))
+        self.assertEqual(result["inserted"], 1)
+        self.assertFalse(result["initial_import_required"])
+        self.assertEqual(result["initial_import_choice"], "imported")
+        self.assertIn("last_success", self.plugin.store.meta())
+        start_day, end_day, timezone = self.plugin.schedule_provider.fetch.await_args.args
+        self.assertEqual((end_day - start_day).days, 6)
+        self.assertEqual(timezone, "Asia/Shanghai")
+        self.plugin._sync_media_evidence.assert_awaited_once()
+
+        # 完成后再次点击不会重新请求，也不会改变首次选择。
+        self.plugin.schedule_provider.fetch.reset_mock()
+        again = asyncio.run(self.choose("skip"))
+        self.assertTrue(again["completed"])
+        self.assertEqual(self.state()["initial_import_choice"], "imported")
+        self.plugin.schedule_provider.fetch.assert_not_awaited()
+
+    def test_failed_import_keeps_prompt_and_does_not_mark_success(self):
+        self.plugin.schedule_provider.fetch = AsyncMock(side_effect=RuntimeError("网络失败"))
+        result = asyncio.run(self.choose("import"))
+        self.assertIn("网络失败", result["error"])
+        self.assertTrue(result["initial_import_required"])
+        meta = self.plugin.store.meta()
+        self.assertNotIn("last_success", meta)
+        self.assertNotIn("initial_import_choice", meta)
+
+    def test_concurrent_click_does_not_start_second_remote_request(self):
+        async def run():
+            await self.plugin._sync_lock.acquire()
+            try:
+                result = await self.choose("import")
+            finally:
+                self.plugin._sync_lock.release()
+            self.assertTrue(result["skipped"])
+            self.assertTrue(result["initial_import_required"])
+            self.plugin.schedule_provider.fetch.assert_not_awaited()
+
+        asyncio.run(run())
+
+    def test_saving_first_key_does_not_fetch_even_with_auto_sync_enabled(self):
+        async def run():
+            self.plugin.config["looki_api_key"] = ""
+            provider = SimpleNamespace(fetch=AsyncMock(return_value=[]))
+            with patch(
+                "astrbot_plugin_looki_companion.main.LookiScheduleProvider",
+                return_value=provider,
+            ), patch(
+                "astrbot_plugin_looki_companion.main.request",
+                SimpleNamespace(json=AsyncMock(return_value={
+                    "looki_api_key": "first-key",
+                    "auto_sync": True,
+                    "sync_interval_minutes": 5,
+                }), query={}),
+            ), patch(
+                "astrbot_plugin_looki_companion.main.json_response",
+                side_effect=lambda data: data,
+            ):
+                result = await self.plugin.api_set_config()
+                await asyncio.sleep(0)
+            self.assertTrue(result["initial_import_required"])
+            provider.fetch.assert_not_awaited()
+            task = self.plugin._sync_task
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        asyncio.run(run())
+
+
 class ConfigApiTests(unittest.TestCase):
     def setUp(self):
         from astrbot_plugin_looki_companion.main import LookiCompanionPlugin
@@ -545,6 +813,12 @@ class ConfigApiTests(unittest.TestCase):
         self.plugin.context = SimpleNamespace(get_all_providers=lambda: [])
         self.plugin._sync_task = None
         self.plugin._stopping = False
+        self.temp = tempfile.TemporaryDirectory()
+        self.plugin.store = ScheduleStore(Path(self.temp.name) / "schedules.sqlite3")
+
+    def tearDown(self):
+        self.plugin.store.close()
+        self.temp.cleanup()
 
     def set_providers(self, *providers):
         self.plugin.context.get_all_providers = lambda: [

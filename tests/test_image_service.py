@@ -288,14 +288,15 @@ class ImageServiceTests(unittest.TestCase):
         self.service._select_candidate.assert_not_awaited()
         self.service._generate_image.assert_not_awaited()
 
-    def test_file_url_classifies_images_and_videos_and_rejects_audio(self):
+    def test_file_url_classifies_images_and_videos_and_keeps_audio_visible(self):
         image = {"file": {"media_type": "IMAGE", "temporary_url": "https://looki.test/image"}}
         video = {"file": {"media_type": "VIDEO", "temporary_url": "https://looki.test/video"}}
         audio = {"file": {"media_type": "AUDIO", "temporary_url": "https://looki.test/audio"}}
         unknown = {"file": {"temporary_url": "https://looki.test/unknown"}}
         self.assertEqual(self.service._file_media_url(image), ("image", "https://looki.test/image"))
         self.assertEqual(self.service._file_media_url(video), ("video", "https://looki.test/video"))
-        self.assertEqual(self.service._file_media_url(audio), ("", ""))
+        # 音频不再静默丢弃：分类仍返回 audio，由调用方交给证据层或跳过图像流水线
+        self.assertEqual(self.service._file_media_url(audio), ("audio", "https://looki.test/audio"))
         self.assertEqual(self.service._file_media_url(unknown), ("image", "https://looki.test/unknown"))
 
     def test_image_download_streams_and_rejects_over_limit_without_writing(self):

@@ -1,0 +1,73 @@
+{
+  "code": 0,
+  "detail": "OK",
+  "note": "脱敏夹具：字段结构来自真实 /moments?on_date= 响应，内容已替换为虚构文本。",
+  "data": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "title": "课前安静的教室",
+      "description": "身穿灰色卫衣，坐在堆满书本的课桌前，低头翻看笔记。",
+      "media_types": ["IMAGE"],
+      "date": "2026-11-12",
+      "tz": "+08:00",
+      "start_time": "2026-11-12T08:10:00+08:00",
+      "end_time": "2026-11-12T08:40:00+08:00",
+      "search_context": "教室,笔记,学习",
+      "cover_file": {
+        "id": "cover-11111111",
+        "created_at": "2026-11-12T08:41:00+08:00",
+        "tz": "+08:00",
+        "file": {
+          "media_type": "IMAGE",
+          "temporary_url": "https://user-file.looki.tech/photo/11111111.jpg?x-looki-token=demo",
+          "metadata": {"width": 1600, "height": 1200}
+        },
+        "thumbnail": {
+          "media_type": "IMAGE",
+          "temporary_url": "https://user-file.looki.tech/thumb/11111111.jpg?x-looki-token=demo",
+          "metadata": {"width": 640, "height": 480}
+        }
+      }
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "title": "晚间自习时光",
+      "description": "晚自习时在教室写作业，中途和同桌聊了几句。",
+      "audio_summary": "期间伴有简短对话，涉及作业进度与明天的安排。",
+      "media_types": ["VIDEO"],
+      "date": "2026-11-12",
+      "tz": "+08:00",
+      "start_time": "2026-11-12T19:30:00+08:00",
+      "end_time": "2026-11-12T21:00:00+08:00",
+      "search_context": "晚自习,学习,写作业",
+      "cover_file": {
+        "id": "cover-22222222",
+        "tz": "+08:00",
+        "file": {
+          "media_type": "VIDEO",
+          "temporary_url": "https://user-file.looki.tech/video/22222222.mp4?x-looki-token=demo",
+          "metadata": {"width": 1600, "height": 1200, "duration_ms": 5119}
+        },
+        "thumbnail": {
+          "media_type": "IMAGE",
+          "temporary_url": "https://user-file.looki.tech/thumb/22222222.jpg?x-looki-token=demo",
+          "metadata": {"width": 640, "height": 480}
+        }
+      }
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "title": "走廊里的短暂停留",
+      "description": "",
+      "media_types": ["IMAGE", "VIDEO"],
+      "capture_mode": "AUTO",
+      "device_id": "device-demo",
+      "unknown_block": {"future_field": "unknown"},
+      "date": "2026-11-12",
+      "tz": "+08:00",
+      "start_time": "2026-11-12T21:10:00+08:00",
+      "end_time": "2026-11-12T21:25:00+08:00",
+      "search_context": "走廊,课间"
+    }
+  ]
+}

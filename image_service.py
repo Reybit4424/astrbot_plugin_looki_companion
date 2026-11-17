@@ -220,22 +220,42 @@ class LookiImageService:
 
         async with httpx.AsyncClient(timeout=provider.timeout, follow_redirects=True) as client:
             for item in matches:
-                try:
-                    response = await client.get(
-                        f"{provider.base_url}/moments/{item['looki_id']}/files",
-                        headers={"x-api-key": provider.api_key},
-                    )
-                    response.raise_for_status()
-                except Exception as exc:
-                    logger.info("[Looki] 跳过无法读取文件列表的活动: %s", type(exc).__name__)
-                    continue
+                raw_items: list[Any] = []
+                cursor = None
+                for _page in range(2):
+                    params: dict[str, Any] = {"limit": 20}
+                    if cursor:
+                        params["cursor"] = cursor
+                    try:
+                        response = await client.get(
+                            f"{provider.base_url}/moments/{item['looki_id']}/files",
+                            params=params,
+                            headers={"x-api-key": provider.api_key},
+                        )
+                        response.raise_for_status()
+                        payload = response.json()
+                    except Exception as exc:
+                        logger.info("[Looki] 跳过无法读取文件列表的活动: %s", type(exc).__name__)
+                        break
+                    data = payload.get("data", payload) if isinstance(payload, dict) else payload
+                    raw_items.extend(_extract_items(payload))
+                    cursor = data.get("next_cursor") if isinstance(data, dict) else None
+                    if not isinstance(data, dict) or not data.get("has_more") or not cursor:
+                        break
                 sources = []
-                for raw in _extract_items(response.json()):
+                skipped_types: list[str] = []
+                for raw in raw_items:
                     media_type, url = self._file_media_url(raw)
                     if not url or url in seen:
                         continue
                     seen.add(url)
+                    if media_type not in ("image", "video"):
+                        # 音频/转写等由 media_service 证据层保存，不再静默丢弃
+                        skipped_types.append(media_type)
+                        continue
                     sources.append((media_type, url))
+                if skipped_types:
+                    logger.info("[Looki] 活动 %s 含非图像媒体 %s，已交给媒体证据层", item["looki_id"][:16], sorted(set(skipped_types)))
                 if sources:
                     groups.append((item, sources))
 
@@ -298,8 +318,12 @@ class LookiImageService:
                 continue
             if kind.startswith("video"):
                 media_type = "video"
+            elif kind.startswith(("audio", "voice", "sound")):
+                media_type = "audio"
+            elif kind.startswith(("transcript", "text")):
+                media_type = "transcript"
             else:
-                return "", ""
+                media_type = "unknown"
         for key in ("temporary_url", "url", "signed_url", "download_url"):
             url = file_obj.get(key)
             if isinstance(url, str) and url.startswith(("http://", "https://")):

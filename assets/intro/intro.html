@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Looki 日程管理 · AstrBot 插件</title>
+<style>
+  :root{
+    --paper:#fffafb;
+    --card:#ffffff;
+    --line:#f0dfe5;
+    --ink:#332a2f;
+    --muted:#756970;
+    --pink:#d85c83;
+    --pink-deep:#7f294b;
+    --pink-soft:#fff0f5;
+    --rose:#f7c8d8;
+    --serif:"Source Han Serif SC","Noto Serif SC","Songti SC",SimSun,serif;
+    --sans:"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+    --mono:"JetBrains Mono",Consolas,"Courier New",monospace;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;background:var(--paper);color:var(--ink);
+    font-family:var(--sans);font-size:16px;line-height:1.75;
+    letter-spacing:.01em;
+  }
+  img{display:block;max-width:100%}
+  a{color:var(--pink-deep);text-decoration:none;border-bottom:1px solid rgba(216,92,131,.35)}
+  h1,h2,h3{font-family:var(--serif);font-weight:600;letter-spacing:.02em;margin:0}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 32px}
+  .mono{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+  .chip{
+    display:inline-flex;align-items:center;gap:6px;
+    font-family:var(--mono);font-size:11px;letter-spacing:.06em;
+    color:var(--muted);background:#fff;border:1px solid var(--line);
+    padding:3px 9px;border-radius:999px;white-space:nowrap;
+  }
+  .chip i{width:6px;height:6px;border-radius:50%;background:var(--pink);display:inline-block}
+
+  /* ---------- hero ---------- */
+  .hero{
+    position:relative;
+    background:var(--pink-deep);color:#fff8fb;
+    padding:76px 0 0;
+  }
+  .hero:before{
+    content:"";position:absolute;inset:0;
+    background:
+      radial-gradient(900px 420px at 78% -10%, rgba(247,200,216,.28), transparent 70%),
+      radial-gradient(700px 380px at 8% 8%, rgba(216,92,131,.5), transparent 72%);
+    pointer-events:none;
+  }
+  .hero .wrap{position:relative}
+  .kicker{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:26px}
+  .kicker .chip{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.24);color:#ffe9f0}
+  .kicker .chip i{background:var(--rose)}
+  .hero h1{
+    font-size:clamp(28px,3.9vw,52px);line-height:1.34;color:#fff8fb;
+    max-width:22em;text-wrap:balance;
+  }
+  .hero h1 em{
+    font-style:normal;color:#ffd1df;
+    box-shadow:inset 0 -.18em 0 rgba(247,200,216,.3);
+  }
+  .lede{margin:26px 0 0;max-width:41em;color:#ffe1e9;font-size:15.5px;line-height:1.95}
+  .stats{
+    display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:0;margin:44px 0 0;border-top:1px solid rgba(255,255,255,.14);
+  }
+  .stat{padding:18px 18px 22px 0;border-right:1px solid rgba(255,255,255,.12)}
+  .stat:last-child{border-right:0}
+  .stat b{display:block;font-family:var(--serif);font-size:30px;color:#fff;line-height:1.2}
+  .stat span{display:block;margin-top:6px;font-size:12px;color:#f6cbd7;letter-spacing:.04em}
+  .hero-shot{
+    position:relative;margin:54px 0 -104px;z-index:2;
+  }
+  .hero-shot .frame{
+    position:relative;background:#fff;border-radius:16px;padding:10px;
+    box-shadow:0 50px 90px -40px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.14);
+    transform:rotate(-1.1deg);
+  }
+  .hero-shot .frame:after{
+    content:"";position:absolute;left:10px;right:10px;bottom:10px;height:110px;
+    background:linear-gradient(rgba(255,255,255,0),#fff 78%);
+    border-radius:0 0 9px 9px;pointer-events:none;
+  }
+  .hero-shot img{border-radius:9px}
+  .hero-shot figcaption{color:#f6cbd7}
+  .hero-shot figcaption .chip{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.24);color:#ffe9f0}
+
+  /* ---------- chapters ---------- */
+  main{padding-top:158px}
+  .chapter{
+    display:grid;grid-template-columns:168px minmax(0,1fr);
+    gap:0;padding:14px 32px 30px;
+    max-width:1120px;margin:0 auto;
+  }
+  .rail{position:relative;padding-right:26px}
+  .rail .stamp{
+    position:sticky;top:26px;
+    font-family:var(--mono);font-size:13px;color:var(--pink);
+    letter-spacing:.04em;
+  }
+  .rail .stamp:after{
+    content:"";display:block;width:9px;height:9px;border-radius:50%;
+    background:var(--pink);margin-top:12px;box-shadow:0 0 0 4px rgba(216,92,131,.16);
+  }
+  .rail:after{
+    content:"";position:absolute;top:0;bottom:-30px;right:0;
+    border-right:1px dashed #efcbd8;
+  }
+  .rail .crest{
+    display:block;width:126px;margin:26px 0 0;
+    opacity:.95;
+  }
+  .rail .crest img{width:100%;height:auto}
+  .body{padding:0 0 48px 40px}
+  .idx{font-family:var(--mono);font-size:11px;color:#a88d98;letter-spacing:.14em}
+  .chapter h2{
+    font-size:clamp(22px,2.6vw,32px);line-height:1.42;margin:8px 0 0;
+  }
+  .chapter h2 small{
+    display:block;font-family:var(--sans);font-size:13px;font-weight:400;
+    color:var(--muted);letter-spacing:.02em;margin-top:10px;line-height:1.7;
+  }
+  .prose{margin:20px 0 0;max-width:44em;color:#51454b;font-size:15px}
+  .prose p{margin:0 0 14px}
+  .prose strong{color:var(--ink);font-weight:600}
+
+  ul.points{list-style:none;margin:22px 0 0;padding:0;display:grid;gap:10px;max-width:46em}
+  ul.points li{
+    position:relative;padding-left:24px;font-size:14.5px;color:#5d5056;
+  }
+  ul.points li:before{
+    content:"";position:absolute;left:4px;top:12px;width:7px;height:7px;
+    border:1.5px solid var(--pink);border-radius:50%;
+  }
+  ul.points b{color:var(--ink);font-weight:600}
+
+  figure.shot{margin:30px 0 0}
+  figure.shot .frame{
+    background:#fff;border:1px solid var(--line);border-radius:14px;padding:8px;
+    box-shadow:0 26px 50px -34px rgba(127,41,75,.22);
+  }
+  figure.shot .frame img{border-radius:8px;width:100%}
+  figcaption{
+    display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+    margin-top:12px;font-size:12px;color:var(--muted);
+  }
+  .crop img{aspect-ratio:1400/900;object-fit:cover;object-position:0 0}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:28px}
+  .grid2 figure{margin:0}
+
+  /* ---------- chat ---------- */
+  .chat{
+    margin:26px 0 0;max-width:720px;background:#fff;border:1px solid var(--line);border-radius:16px;
+    overflow:hidden;box-shadow:0 22px 44px -36px rgba(127,41,75,.18);
+  }
+  .chat-head{
+    display:flex;align-items:center;gap:9px;padding:11px 16px;
+    border-bottom:1px solid var(--line);background:#fbfdfb;
+    font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.06em;
+  }
+  .chat-head i{width:7px;height:7px;border-radius:50%;background:var(--pink);display:inline-block}
+  .chat-body{padding:18px 16px 20px;display:grid;gap:14px;background:
+    linear-gradient(#fff,#fff7fa)}
+  .msg{display:flex;gap:9px;align-items:flex-start}
+  .msg.user{flex-direction:row-reverse}
+  .avatar{
+    flex:0 0 30px;width:30px;height:30px;border-radius:9px;background:var(--pink-soft);
+    color:var(--pink-deep);font-family:var(--mono);font-size:12px;display:grid;place-items:center;
+    border:1px solid var(--line);
+  }
+  .bubble{
+    max-width:min(78%,560px);padding:10px 14px;border-radius:12px;
+    font-size:14.5px;line-height:1.7;background:#fff;border:1px solid var(--line);
+  }
+  .msg.user .bubble{background:var(--pink-deep);color:#fff8fb;border-color:var(--pink-deep)}
+  .bubble .qn{display:block;margin-top:8px;font-size:12.5px;color:var(--muted)}
+  .chat-note{
+    padding:10px 16px;border-top:1px dashed var(--line);background:#fff;
+    font-size:12px;color:var(--muted);
+  }
+
+  /* ---------- table ---------- */
+  .matrix{
+    margin:28px 0 0;width:100%;border-collapse:separate;border-spacing:0;
+    background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    font-size:14px;
+  }
+  .matrix th,.matrix td{padding:13px 16px;text-align:left;border-bottom:1px solid var(--line)}
+  .matrix thead th{background:var(--pink-soft);font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.06em;font-weight:400}
+  .matrix tbody tr:last-child td{border-bottom:0}
+  .matrix td:first-child{font-weight:600;color:var(--ink)}
+  .yes{color:var(--pink-deep);font-weight:600}
+  .no{color:#a8b3ad}
+  .dim{color:var(--muted)}
+
+
+  /* ---------- install ---------- */
+  .install{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:26px 0 0}
+  .card{
+    background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px;
+  }
+  .card .n{font-family:var(--serif);font-size:26px;color:var(--pink);line-height:1}
+  .card h4{font-family:var(--sans);font-size:14.5px;font-weight:600;margin:12px 0 6px}
+  .card p{margin:0;font-size:13px;color:var(--muted);line-height:1.75}
+  code{
+    font-family:var(--mono);font-size:12.5px;background:var(--pink-soft);
+    border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:var(--pink-deep);
+  }
+
+  /* ---------- capability strip ---------- */
+  .capabilities{padding-left:168px;margin:0 0 42px}
+  .capabilities .lbl{font-family:var(--mono);font-size:11px;color:#a88d98;letter-spacing:.14em;margin-bottom:12px}
+  .capabilities .row{display:flex;flex-wrap:wrap;gap:8px}
+  .capabilities .row span{
+    background:#fff;border:1px solid var(--line);border-radius:999px;
+    padding:5px 12px;font-size:12.5px;color:var(--pink-deep);line-height:1.6;
+  }
+
+  /* ---------- footer ---------- */
+  footer{
+    margin-top:40px;background:var(--pink-deep);color:#f7dce5;
+    padding:46px 0 40px;
+  }
+  footer .wrap{display:flex;flex-wrap:wrap;gap:24px;justify-content:space-between;align-items:flex-end}
+  footer h3{font-size:19px;color:#fff8fb;margin:0 0 8px}
+  footer p{margin:0;font-size:13px;line-height:1.9;max-width:36em}
+  footer a{color:#ffd1df;border-color:rgba(255,209,223,.4)}
+
+  @media (max-width:900px){
+    .wrap{padding:0 20px}
+    .hero{padding-top:54px}
+    .stats{grid-template-columns:repeat(2,1fr)}
+    .stat:nth-child(2){border-right:0}
+    .stat:nth-child(n+3){border-top:1px solid rgba(255,255,255,.12)}
+    .hero-shot{margin-bottom:-70px}
+    main{padding-top:118px}
+    .chapter{grid-template-columns:1fr;padding:6px 20px 22px}
+    .capabilities{padding-left:0}
+    .rail{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 0 12px}
+    .rail .stamp{position:static;font-size:12px}
+    .rail .stamp:after{display:inline-block;margin:0 0 0 10px;vertical-align:middle}
+    .rail .crest{width:70px;margin:0;flex:0 0 auto}
+    .rail:after{display:none}
+    .body{padding:0 0 30px}
+    .grid2,.install{grid-template-columns:1fr}
+    .bubble{max-width:86%}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="kicker">
+      <span class="chip"><i></i>AstrBot 插件</span>
+      <span class="chip">Looki 日程管理</span>
+      <span class="chip">v0.8.0</span>
+    </div>
+    <h1>让虚拟伙伴，<br>真正知道你度过了怎样的每一天。</h1>
+    <p class="lede">
+      Looki 负责记录，插件负责把这些真实生活片段带到 AstrBot 里：同步到本地日历，允许你随口查询、补充校正，
+      还可以按“那天发生过什么”找回照片与视频。你的伙伴不只会聊天，也会慢慢认识你的生活。
+    </p>
+    <div class="stats">
+      <div class="stat"><b>5<small style="font-size:13px"> 分钟</small></b><span>默认同步间隔</span></div>
+      <div class="stat"><b>7<small style="font-size:13px"> 天</small></b><span>每次向前回填</span></div>
+      <div class="stat"><b>366<small style="font-size:13px"> 天</small></b><span>单次查询跨度上限</span></div>
+      <div class="stat"><b>6 → 1</b><span>候选图里挑出一张</span></div>
+    </div>
+  </div>
+  <div class="wrap">
+    <figure class="hero-shot">
+      <div class="frame">
+        <img src="screens/calendar.png" alt="Looki 日程管理插件页面：月视图与当天时间轴">
+      </div>
+      <figcaption>
+        <span class="chip"><i></i>真实插件界面</span>
+        <span>月历、时间轴与日程详情，都在 AstrBot 控制台里直接查看。</span>
+      </figcaption>
+    </figure>
+  </div>
+</header>
+
+<main>
+
+  <div class="wrap">
+    <div class="capabilities">
+      <div class="lbl">CAPABILITIES</div>
+      <div class="row">
+        <span>后台自动同步</span><span>本地长久保存</span><span>月历 + 单日时间轴</span>
+        <span>补录 / 编辑 / 删除</span><span>同步保护人工修改</span><span>关键词跨天查询</span>
+        <span>活动回忆找图</span><span>视频抽帧</span><span>多张里挑一张</span>
+        <span>原图 / 图生图</span><span>成员与群白名单</span><span>对话校正</span>
+        <span>让伙伴慢慢认识你</span>
+      </div>
+    </div>
+  </div>
+
+  <section class="chapter">
+    <div class="rail">
+      <div class="stamp">08:40</div>
+      <figure class="crest"><img src="art/seal-01-sync.png" alt="同步：界面之外的数据汇入本地"></figure>
+    </div>
+    <div class="body">
+      <div class="idx">CHAPTER 01 · SYNC</div>
+      <h2>先让它把一天记下来
+        <small>你不需要每天打开 Looki 导出一次。插件在后台按间隔拉取，写进本地库。</small>
+      </h2>
+      <div class="prose">
+        <p>Looki 整理好的时间片段会定期同步到插件本地的日程库，落在月历和单日时间轴里。打开 AstrBot，就能看到这一天从哪里开始、又在哪里转了弯。</p>
+        <p>你可以补录、编辑、删除，也可以放心交给它自动更新：人工整理过的内容会被好好保留下来。</p>
+      </div>
+      <ul class="points">
+        <li><b>自动同步。</b>后台按间隔带回新的生活片段，不需要每天手动导出。</li>
+        <li><b>本地留存。</b>记录写入本地数据库，重启之后仍然能继续查看。</li>
+        <li><b>日历化查看。</b>月历看整体，时间轴看细节，补录和编辑也在同一个页面完成。</li>
+      </ul>
+      <figure class="shot">
+        <div class="frame"><img src="screens/day-list.png" alt="当天时间轴：小标题、关键词、详细描述、音频摘要与对话校正"></div>
+        <figcaption>
+          <span class="chip"><i></i>真实插件界面</span>
+          <span>单日时间轴：关键词、详细描述 · 仅作线索、音频摘要 · Looki 捕捉，以及对话校正。</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="rail">
+      <div class="stamp">12:05</div>
+      <figure class="crest"><img src="art/seal-02-ask.png" alt="提问：在对话里检索"></figure>
+    </div>
+    <div class="body">
+      <div class="idx">CHAPTER 02 · ASK</div>
+      <h2>想不起来，就直接问一句
+        <small>不用打开网页。在私聊或群里随口说一句，伙伴就去帮你翻。</small>
+      </h2>
+      <div class="prose">
+        <p>你不用记住日期，也不用把问题说得像搜索框。随口问一句，伙伴就会从已经同步的日程里，把那段生活捞回来。</p>
+      </div>
+      <div class="chat">
+        <div class="chat-head"><i></i>和你的伙伴聊天</div>
+        <div class="chat-body">
+          <div class="msg user"><div class="bubble">我上周三下午是不是又消失了？</div></div>
+          <div class="msg bot"><div class="avatar">L</div><div class="bubble">
+            才没有消失啦。14:00 你在图书馆整理实验数据，后来还去操场走了一圈。看起来是很认真、但也有好好喘气的一天呢。<span class="qn">我会把日期、时间和那天的上下文一起告诉你</span>
+          </div></div>
+          <div class="msg user"><div class="bubble">那我是不是又忘记吃饭了？</div></div>
+          <div class="msg bot"><div class="avatar">L</div><div class="bubble">
+            这件事我没有看到明确记录，所以不乱猜。下次你告诉我，我就帮你记住。<span class="qn">不知道的事情，不替你编一个答案</span>
+          </div></div>
+        </div>
+        <div class="chat-note">让伙伴知道你做过什么，也知道哪些事情还不能确定。</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="rail">
+      <div class="stamp">14:00</div>
+      <figure class="crest"><img src="art/seal-03-correct.png" alt="校正：追加注记而不改原文"></figure>
+    </div>
+    <div class="body">
+      <div class="idx">CHAPTER 03 · CORRECT</div>
+      <h2>它记错了，你说了算
+        <small>Looki 的识别不可能永远对。错的地方，你补一句就够。</small>
+      </h2>
+      <div class="prose">
+        <p>现实里的记录偶尔会记偏一点，这很正常。你只要告诉伙伴“这里应该是这样”，它就会把你的补充记下来，之后再提到这件事时，按你确认过的版本理解。</p>
+      </div>
+      <div class="chat">
+        <div class="chat-head"><i></i>和你的伙伴聊天</div>
+        <div class="chat-body">
+          <div class="msg user"><div class="bubble">今天上午那条记错了，随堂练习只做了一道。</div></div>
+          <div class="msg bot"><div class="avatar">L</div><div class="bubble">
+            好，我找到啦：是 09:30–11:10 的「数据结构课与随堂练习」。要把这句补充记在这里吗？
+          </div></div>
+          <div class="msg user"><div class="bubble">加吧，另一道是课后作业。</div></div>
+          <div class="msg bot"><div class="avatar">L</div><div class="bubble">
+            记住啦～随堂题其实只做了一道，另一道是课后作业。以后再聊到这节课，我就按这个版本跟你说话。原始记录我还留着，不会把它改掉。
+          </div></div>
+        </div>
+        <div class="chat-note">说清楚一点，伙伴就会把你的意思记在这段生活里。</div>
+      </div>
+      <div class="grid2">
+        <figure class="shot crop">
+          <div class="frame"><img src="screens/correction.png" alt="页面中的对话校正注记"></div>
+          <figcaption><span class="chip"><i></i>真实界面</span><span>你的补充会显示在这段日程里。</span></figcaption>
+        </figure>
+        <figure class="shot">
+          <div class="frame"><img src="screens/edit.png" alt="编辑日程弹窗"></div>
+          <figcaption><span class="chip"><i></i>真实界面</span><span>记错了也可以直接改、补录或删除。</span></figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="rail">
+      <div class="stamp">17:30</div>
+      <figure class="crest"><img src="art/seal-04-recall.png" alt="回忆：按活动找到照片与视频"></figure>
+    </div>
+    <div class="body">
+      <div class="idx">CHAPTER 04 · RECALL</div>
+      <h2>照片不靠翻相册，靠那天发生过什么
+        <small>你记得的是「一起玩 Switch」，不是某张图的文件名。</small>
+      </h2>
+      <div class="prose">
+        <p>没有明确日期时，只要说出“Switch”“看展”或“和朋友吃饭”这样的活动，伙伴就能顺着你的生活记录找到那一天。</p>
+        <p>找到之后，它会从相关照片和视频里挑出最贴近这段回忆的一张；你也可以让它把这张照片变成另一种风格。</p>
+      </div>
+      <div class="chat">
+        <div class="chat-head"><i></i>把记忆也找回来</div>
+        <div class="chat-body">
+          <div class="msg user"><div class="bubble">上次和大家玩 Switch 是哪天？照片还能找到吗？</div></div>
+          <div class="msg bot"><div class="avatar">L</div><div class="bubble">
+            找到了，是 11 月 2 日那次。你们玩到很晚，还顺手拍了几张照片。要我挑一张最像当时的给你吗？
+          </div></div>
+          <div class="msg user"><div class="bubble">嗯！顺便变成二次元一点的。</div></div>
+          <div class="msg bot"><div class="avatar">L</div><div class="bubble">
+            收到，正在把这段“大家一起玩到很晚”的记忆画成另一种样子。<span class="qn">原图和图生图，都可以从同一段活动回忆开始</span>
+          </div></div>
+        </div>
+        <div class="chat-note">记住活动，就能从活动回到照片；不必先想起文件名。</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="rail">
+      <div class="stamp">20:00</div>
+      <figure class="crest"><img src="art/seal-05-scope.png" alt="边界：谁可以查询，谁能改"></figure>
+    </div>
+    <div class="body">
+      <div class="idx">CHAPTER 05 · SCOPE</div>
+      <h2>让它知道该听谁的
+        <small>你的生活由你决定分享给谁，伙伴也会记得每个人能做什么。</small>
+      </h2>
+      <div class="prose">
+        <p>日程和回忆不必对所有人敞开。你可以把查询和找图交给指定成员，也可以只留在自己的私聊里；需要修正内容时，再交给你信任的人处理。</p>
+      </div>
+      <table class="matrix">
+        <thead><tr><th>使用方式</th><th>管理员</th><th>白名单成员</th><th>其他人</th></tr></thead>
+        <tbody>
+          <tr><td>查看日程</td><td class="yes">可用</td><td class="yes">可用</td><td class="dim">按群聊设置</td></tr>
+          <tr><td>找图 / 图生图</td><td class="yes">可用</td><td class="yes">可用</td><td class="dim">按群聊设置</td></tr>
+          <tr><td>补充校正</td><td class="yes">可用</td><td class="no">不开放</td><td class="no">不开放</td></tr>
+        </tbody>
+      </table>
+      <ul class="points">
+        <li><b>私聊和群聊都能用。</b>按你的使用场景选择开放范围，白名单成员可以直接参与。</li>
+        <li><b>校正交给管理员。</b>重要的生活记录由你确认，伙伴不会因为别人随口一句话就改掉。</li>
+        <li><b>模型和图片方式可配置。</b>原图、图生图、候选数量与同步开关，都能在插件设置页调整。</li>
+      </ul>
+      <figure class="shot">
+        <div class="frame"><img src="screens/settings.png" alt="设置页：候选图数量、图生图模型与四个开关"></div>
+        <figcaption><span class="chip"><i></i>真实插件界面</span><span>设置页：候选图数量、原图 / 图生图与模型配置，以及自动同步和群聊开关。</span></figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <div class="rail">
+      <div class="stamp">21:30</div>
+      <figure class="crest"><img src="art/seal-06-install.png" alt="安装：三步接入"></figure>
+    </div>
+    <div class="body">
+      <div class="idx">CHAPTER 06 · INSTALL</div>
+      <h2>装上就三步
+        <small>依赖只有两个 Python 库，视频抽帧才需要系统里的 ffmpeg。</small>
+      </h2>
+      <div class="install">
+        <div class="card">
+          <div class="n">01</div>
+          <h4>放进插件目录</h4>
+          <p>拷到 <code>data/plugins/</code>，或直接在 AstrBot 插件市场安装。</p>
+        </div>
+        <div class="card">
+          <div class="n">02</div>
+          <h4>填 Looki API Key</h4>
+          <p>在设置页粘贴你的 Looki API Key，Base URL 默认 <code>open.looki.tech</code>。</p>
+        </div>
+        <div class="card">
+          <div class="n">03</div>
+          <h4>等第一次同步</h4>
+          <p>保持自动同步开启，或到插件页点「立即同步」，然后核对日历。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <h3>Looki 日程管理 · AstrBot 插件</h3>
+      <p>
+        需要 AstrBot ≥ 4.23.1，Python 3.10+，支持 aiocqhttp。MIT 许可。<br>
+        作者 Reybit · 测试交流群 637906820
+      </p>
+    </div>
+
+  </div>
+</footer>
+
+</body>
+</html>

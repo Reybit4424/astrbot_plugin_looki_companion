@@ -1,0 +1,55 @@
+{
+  "code": 0,
+  "detail": "OK",
+  "note": "脱敏夹具：结构来自真实 /moments/{id}/files 响应；AUDIO 与未知类型为结构性假设，用于验证不再静默丢弃。",
+  "data": {
+    "has_more": true,
+    "next_cursor": "files-cursor-1",
+    "items": [
+      {
+        "id": "file-001",
+        "created_at": "2026-11-12T08:41:00+08:00",
+        "file": {
+          "media_type": "IMAGE",
+          "temporary_url": "https://user-file.looki.tech/photo/001.jpg?x-looki-token=demo",
+          "metadata": {"width": 1600, "height": 1200}
+        },
+        "thumbnail": {
+          "media_type": "IMAGE",
+          "temporary_url": "https://user-file.looki.tech/thumb/001.jpg?x-looki-token=demo",
+          "metadata": {"width": 640, "height": 480}
+        }
+      },
+      {
+        "id": "file-002",
+        "created_at": "2026-11-12T19:31:00+08:00",
+        "file": {
+          "media_type": "VIDEO",
+          "temporary_url": "https://user-file.looki.tech/video/002.mp4?x-looki-token=demo",
+          "metadata": {"width": 1600, "height": 1200, "duration_ms": 5119}
+        },
+        "thumbnail": {
+          "media_type": "IMAGE",
+          "temporary_url": "https://user-file.looki.tech/thumb/002.jpg?x-looki-token=demo",
+          "metadata": {"width": 640, "height": 480}
+        }
+      },
+      {
+        "id": "file-003",
+        "file": {
+          "media_type": "AUDIO",
+          "mime_type": "audio/mp4",
+          "temporary_url": "https://user-file.looki.tech/audio/003.m4a?x-looki-token=demo",
+          "metadata": {"duration_ms": 90000}
+        }
+      },
+      {
+        "id": "file-004",
+        "file": {
+          "media_type": "SENSOR",
+          "temporary_url": "https://user-file.looki.tech/other/004.bin?x-looki-token=demo"
+        }
+      }
+    ]
+  }
+}

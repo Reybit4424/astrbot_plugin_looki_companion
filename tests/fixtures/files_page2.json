@@ -1,0 +1,28 @@
+{
+  "code": 0,
+  "detail": "OK",
+  "note": "脱敏夹具：/files 第二页，验证分页不会漏掉第 21 个及之后的证据。",
+  "data": {
+    "has_more": false,
+    "next_cursor": null,
+    "items": [
+      {
+        "id": "file-021",
+        "file": {
+          "media_type": "IMAGE",
+          "temporary_url": "https://user-file.looki.tech/photo/021.jpg?x-looki-token=demo",
+          "metadata": {"width": 1600, "height": 1200}
+        }
+      },
+      {
+        "id": "file-022",
+        "file": {
+          "media_type": "AUDIO",
+          "mime_type": "audio/mpeg",
+          "temporary_url": "https://user-file.looki.tech/audio/022.mp3?x-looki-token=demo",
+          "metadata": {"duration_ms": 180000}
+        }
+      }
+    ]
+  }
+}

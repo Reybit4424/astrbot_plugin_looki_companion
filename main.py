@@ -24,12 +24,14 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .image_service import DEFAULT_ANIME_PROMPT, LookiImageService
+from .media_service import fetch_moment_evidence, summary_entry
 from .schedule_store import ScheduleStore
 
 PLUGIN_NAME = "astrbot_plugin_looki_companion"
 AUTHOR = "瑞贝特"
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 DEFAULT_LOOKI_BASE_URL = "https://open.looki.tech/api/v1"
+INITIAL_IMPORT_META_KEY = "initial_import_choice"
 CLUE_SCOPE_ADMIN = "仅对管理成员开放"
 CLUE_SCOPES = (CLUE_SCOPE_ADMIN, "关闭")
 
@@ -75,11 +77,157 @@ def _get_plugin(context: Context) -> Any:
     return metadata.star_cls if metadata else None
 
 
+_MEDIA_TYPE_ALIASES = {
+    "image": "photo",
+    "photo": "photo",
+    "picture": "photo",
+    "video": "video",
+    "movie": "video",
+    "audio": "audio",
+    "voice": "audio",
+    "sound": "audio",
+    "transcript": "transcript",
+    "text": "transcript",
+}
+
+
+def _normalize_media_type(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    for alias, normalized in _MEDIA_TYPE_ALIASES.items():
+        if text.startswith(alias):
+            return normalized
+    return "unknown"
+
+
+def moment_media_types(moment: Any) -> list[str]:
+    """汇总 moment 自带的媒体类型与封面类型，未知类型统一记为 unknown。"""
+    if not isinstance(moment, dict):
+        return []
+    raw_types: list[Any] = []
+    values = moment.get("media_types")
+    if isinstance(values, list):
+        raw_types.extend(values)
+    elif isinstance(values, str) and values.strip():
+        raw_types.append(values)
+    for key in ("cover_file", "file"):
+        obj = moment.get(key)
+        if isinstance(obj, dict):
+            inner = obj.get("file") if isinstance(obj.get("file"), dict) else obj
+            raw_types.append(inner.get("media_type"))
+    result: list[str] = []
+    for value in raw_types:
+        if not value:
+            continue
+        normalized = _normalize_media_type(value)
+        if normalized not in result:
+            result.append(normalized)
+    return result
+
+
+def capture_mode_of(moment: Any, media_types: list[str] | None = None) -> str:
+    """优先使用 Looki 明示的采集模式；缺失时由媒体类型保守推断，未知即 unknown。"""
+    declared = ""
+    if isinstance(moment, dict):
+        for key in ("capture_mode", "recording_mode", "media_mode", "mode"):
+            value = moment.get(key)
+            if isinstance(value, str) and value.strip():
+                declared = value.strip().lower()
+                break
+    if declared:
+        for known in ("photo", "video", "audio", "auto"):
+            if declared.startswith(known):
+                return known
+        return "unknown"
+    types = media_types if media_types is not None else moment_media_types(moment)
+    known = [item for item in types if item in ("photo", "video", "audio")]
+    if len(known) == 1:
+        return known[0]
+    if len(known) > 1:
+        return "mixed"
+    return "unknown"
+
+
+def extract_moment_rows(payload: Any) -> list[dict[str, Any]]:
+    """兼容 data(list) / data.moments / data.items / 嵌套 data.data 四种响应形态。"""
+    data = payload.get("data", payload) if isinstance(payload, dict) else payload
+    for _ in range(3):
+        if isinstance(data, list):
+            return [row for row in data if isinstance(row, dict)]
+        if isinstance(data, dict):
+            for key in ("moments", "items"):
+                rows = data.get(key)
+                if isinstance(rows, list):
+                    return [row for row in rows if isinstance(row, dict)]
+            data = data.get("data")
+            continue
+        break
+    raise ValueError(f"Looki moments 响应格式无效：顶层类型 {type(data).__name__}")
+
+
+def parse_moment(moment: Any, zone: ZoneInfo) -> tuple[dict[str, Any] | None, str]:
+    """解析单个 moment。成功返回 (记录, "")，失败返回 (None, 可诊断原因)。"""
+    if not isinstance(moment, dict) or not moment.get("id"):
+        return None, "缺少 id"
+    start_raw = moment.get("start_time")
+    end_raw = moment.get("end_time")
+    if not start_raw or not end_raw:
+        return None, "缺少起止时间"
+    try:
+        start = datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
+        end = datetime.fromisoformat(str(end_raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None, "起止时间格式无效"
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=zone)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=zone)
+    # 统一换算到插件配置时区：否则 UTC 偏移会让 day 归属和“22 点后活动”判断出错
+    start = start.astimezone(zone)
+    end = end.astimezone(zone)
+    try:
+        day = date.fromisoformat(str(moment.get("date") or "").strip()).isoformat()
+    except ValueError:
+        day = start.date().isoformat()
+    media_types = moment_media_types(moment)
+    return {
+        "looki_id": str(moment["id"]),
+        "date": day,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "title": str(moment.get("title") or "").strip(),
+        "description": str(moment.get("description") or "").strip(),
+        "audio_summary": str(moment.get("audio_summary") or "").strip(),
+        "keywords": [k.strip() for k in str(moment.get("search_context") or "").split(",") if k.strip()][:30],
+        "media_types": media_types,
+        "capture_mode": capture_mode_of(moment, media_types),
+        "raw_json": moment,
+    }, ""
+
+
 class LookiScheduleProvider:
     def __init__(self, base_url: str, api_key: str, timeout: int = 20):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+
+    async def _fetch_day(self, client: httpx.AsyncClient, day: date) -> list[dict[str, Any]]:
+        response = None
+        for attempt in range(2):
+            try:
+                response = await client.get(
+                    f"{self.base_url}/moments",
+                    params={"on_date": day.isoformat()},
+                    headers={"x-api-key": self.api_key},
+                )
+                response.raise_for_status()
+                break
+            except (httpx.ConnectError, httpx.TimeoutException):
+                if attempt:
+                    raise
+                await asyncio.sleep(2)
+        if response is None:
+            raise ValueError("Looki moments 请求未返回响应")
+        return extract_moment_rows(response.json())
 
     async def fetch(self, start_day: date, end_day: date, timezone: str) -> list[dict[str, Any]]:
         zone = ZoneInfo(timezone)
@@ -87,58 +235,22 @@ class LookiScheduleProvider:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             current = start_day
             while current <= end_day:
-                for attempt in range(2):
-                    try:
-                        response = await client.get(
-                            f"{self.base_url}/moments",
-                            params={"on_date": current.isoformat()},
-                            headers={"x-api-key": self.api_key},
-                        )
-                        response.raise_for_status()
-                        break
-                    except (httpx.ConnectError, httpx.TimeoutException):
-                        if attempt:
-                            raise
-                        await asyncio.sleep(2)
-                payload = response.json()
-                data = payload.get("data", payload) if isinstance(payload, dict) else payload
-                rows = data.get("moments", data.get("items", [])) if isinstance(data, dict) else data
-                if not isinstance(rows, list):
-                    raise ValueError("Looki moments 响应格式无效")
+                try:
+                    rows = await self._fetch_day(client, current)
+                except Exception as exc:
+                    # 单日失败只记录日志并跳过，不中断整个同步窗口（P1-4）。
+                    logger.warning("[Looki] %s 同步失败，已跳过该日期：%s", current.isoformat(), exc)
+                    current += timedelta(days=1)
+                    continue
+                skipped = 0
                 for moment in rows:
-                    if not isinstance(moment, dict) or not moment.get("id"):
+                    parsed, reason = parse_moment(moment, zone)
+                    if parsed is None:
+                        skipped += 1
+                        logger.info("[Looki] 跳过无法解析的活动 %s：%s", str(moment.get("id") or "?")[:16], reason)
                         continue
-                    start_raw = moment.get("start_time")
-                    end_raw = moment.get("end_time")
-                    if not start_raw or not end_raw:
-                        continue
-                    try:
-                        start = datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
-                        end = datetime.fromisoformat(str(end_raw).replace("Z", "+00:00"))
-                    except (TypeError, ValueError):
-                        continue
-                    if start.tzinfo is None:
-                        start = start.replace(tzinfo=zone)
-                    if end.tzinfo is None:
-                        end = end.replace(tzinfo=zone)
-                    # 统一换算到插件配置时区：否则 UTC 偏移会让 day 归属和“22 点后活动”判断出错
-                    start = start.astimezone(zone)
-                    end = end.astimezone(zone)
-                    try:
-                        day = date.fromisoformat(str(moment.get("date") or "").strip()).isoformat()
-                    except ValueError:
-                        day = start.date().isoformat()
-                    result.append({
-                        "looki_id": str(moment["id"]),
-                        "date": day,
-                        "start": start.isoformat(),
-                        "end": end.isoformat(),
-                        "title": str(moment.get("title") or "").strip(),
-                        "description": str(moment.get("description") or "").strip(),
-                        "audio_summary": str(moment.get("audio_summary") or "").strip(),
-                        "keywords": [k.strip() for k in str(moment.get("search_context") or "").split(",") if k.strip()][:30],
-                        "raw_json": moment,
-                    })
+                    result.append(parsed)
+                logger.info("[Looki] %s 拉取 %d 条，解析成功 %d 条，跳过 %d 条", current.isoformat(), len(rows), len(rows) - skipped, skipped)
                 current += timedelta(days=1)
         return result
 
@@ -146,7 +258,7 @@ class LookiScheduleProvider:
 @dataclass
 class QueryScheduleTool(FunctionTool[AstrAgentContext]):
     name: str = "query_looki_schedule"
-    description: str = ("按日期查阅本地日程事实，返回记录 id、时间段、标题、关键词、Looki 原始描述和对话校正。日期按插件配置时区理解。用户询问细节、具体日期或活动时用本工具。若 corrections 与原始描述冲突，以最新的对话校正为准，原始描述仅作线索。关键词可能不同于用户用词：若返回 keyword_matched=false，说明关键词未直接命中，items 只是候选记录，须如实说明。结果是事实材料，不是回复台词。")
+    description: str = ("按日期查阅本地日程事实，返回记录 id、时间段、标题、关键词、Looki 原始描述、音频摘要、媒体类型和对话校正。日期按插件配置时区理解。用户询问细节、具体日期或活动时用本工具。若 corrections 与原始描述冲突，以最新的对话校正为准，原始描述仅作线索。audio_summary 是 Looki 生成的音频摘要文本（可能来自录音或自动场景理解），不是原始录音；media_evidence 中 summary 类型的 text_excerpt 同理。关键词可能不同于用户用词：若返回 keyword_matched=false，说明关键词未直接命中，items 只是候选记录，须如实说明。结果是事实材料，不是回复台词。")
     parameters: dict = Field(default_factory=lambda: {
         "type": "object",
         "properties": {
@@ -173,9 +285,22 @@ class QueryScheduleTool(FunctionTool[AstrAgentContext]):
             return "查询日期或参数无效。"
         if not items:
             return "该日期范围内没有记录。"
+        looki_ids = [item["looki_id"] for item in items if item.get("looki_id")]
+        evidence = await asyncio.to_thread(plugin.store.media_evidence, looki_ids)
         payload = {
             "keyword_matched": matched,
-            "items": [{k: item[k] for k in ("id", "date", "start_at", "end_at", "title", "keywords", "description", "corrections", "source")} for item in items],
+            "items": [
+                {
+                    **{k: item[k] for k in ("id", "date", "start_at", "end_at", "title", "keywords", "description", "audio_summary", "corrections", "source")},
+                    "media_types": item.get("media_types") or [],
+                    "capture_mode": item.get("capture_mode") or "unknown",
+                    "media_evidence": [
+                        {k: row[k] for k in ("media_type", "mime_type", "duration_ms", "has_thumbnail", "availability", "text_excerpt")}
+                        for row in evidence.get(item.get("looki_id"), [])[:5]
+                    ],
+                }
+                for item in items
+            ],
         }
         if keyword and not matched:
             payload["notice"] = f"关键词「{keyword}」未直接匹配任何记录的标题或关键词；以上为该日期范围内的全部候选记录，不得当作确定事实，需要时请向用户确认。"
@@ -278,9 +403,12 @@ class LookiCompanionPlugin(Star):
             ("/" + PLUGIN_NAME + "/events/<item_id>/update", self.api_update, ["POST"]),
             ("/" + PLUGIN_NAME + "/events/<item_id>/delete", self.api_delete, ["POST"]),
             ("/" + PLUGIN_NAME + "/sync", self.api_sync, ["POST"]),
+            ("/" + PLUGIN_NAME + "/initial-import", self.api_initial_import, ["POST"]),
             ("/" + PLUGIN_NAME + "/status", self.api_status, ["GET"]),
             ("/" + PLUGIN_NAME + "/config", self.api_get_config, ["GET"]),
             ("/" + PLUGIN_NAME + "/config", self.api_set_config, ["POST"]),
+            ("/" + PLUGIN_NAME + "/media", self.api_media, ["GET"]),
+            ("/" + PLUGIN_NAME + "/media-summary", self.api_media_summary, ["GET"]),
         ]
         for route, handler, methods in routes:
             self.context.register_web_api(route, handler, methods, "Looki schedule management")
@@ -312,10 +440,31 @@ class LookiCompanionPlugin(Star):
                 pass
         await asyncio.to_thread(self.store.close)
 
+    async def _sync_media_evidence(self, provider: Any, today: date, days: int) -> None:
+        """抓取最近窗口内尚未抓过的少量事件的媒体证据；任何失败都不影响主同步。"""
+        if not bool(self.config.get("enable_media_evidence", True)):
+            return
+        try:
+            limit = max(1, min(int(self.config.get("media_evidence_max_moments", 6)), 30))
+            start = (today - timedelta(days=days - 1)).isoformat()
+            pending = await asyncio.to_thread(self.store.pending_media_moments, start, today.isoformat(), limit)
+            for row in pending:
+                looki_id = row["looki_id"]
+                entries = await fetch_moment_evidence(provider, looki_id, 2)
+                if entries is None:
+                    continue
+                summary = summary_entry(looki_id, row.get("audio_summary", ""))
+                if summary:
+                    entries = entries + [summary]
+                saved = await asyncio.to_thread(self.store.sync_media_evidence, looki_id, entries)
+                logger.info("[Looki] 媒体证据 %s：%d 条", looki_id[:16], saved)
+        except Exception as exc:
+            logger.warning("[%s] 媒体证据同步失败（不影响日程同步）：%s", PLUGIN_NAME, str(exc) or type(exc).__name__)
+
     async def _sync_loop(self):
         while not self._stopping:
             try:
-                await self.sync_once()
+                await self.sync_once(automatic=True)
                 interval = max(1, int(self.config.get("sync_interval_minutes", 5))) * 60
                 await asyncio.sleep(interval)
             except asyncio.CancelledError:
@@ -325,10 +474,25 @@ class LookiCompanionPlugin(Star):
                 logger.warning("[%s] 同步循环异常: %s", PLUGIN_NAME, str(exc) or type(exc).__name__)
                 await asyncio.sleep(60)
 
-    async def sync_once(self):
+    def _initial_import_required(self, meta: dict[str, str]) -> bool:
+        has_key = bool(str(self.config.get("looki_api_key") or "").strip())
+        return has_key and not meta.get("last_success") and not meta.get(INITIAL_IMPORT_META_KEY)
+
+    async def _initial_import_state(self):
+        meta = await asyncio.to_thread(self.store.meta)
+        return {
+            "initial_import_required": self._initial_import_required(meta),
+            "initial_import_choice": meta.get(INITIAL_IMPORT_META_KEY, ""),
+        }
+
+    async def sync_once(self, automatic: bool = False):
         if self._sync_lock.locked():
             return {"skipped": True}
         async with self._sync_lock:
+            if automatic:
+                meta = await asyncio.to_thread(self.store.meta)
+                if self._initial_import_required(meta):
+                    return {"skipped": True, "initial_import_required": True}
             now = datetime.now().astimezone().isoformat()
             await asyncio.to_thread(self.store.set_meta, "last_attempt", now)
             provider = getattr(self, "schedule_provider", None)
@@ -342,9 +506,13 @@ class LookiCompanionPlugin(Star):
                 today = datetime.now(ZoneInfo(timezone)).date()
                 items = await provider.fetch(today - timedelta(days=days - 1), today, timezone)
                 inserted = await asyncio.to_thread(self.store.upsert_remote, items, bool(self.config.get("store_raw_json", False)))
+                await self._sync_media_evidence(provider, today, days)
                 synced = datetime.now().astimezone().isoformat()
                 await asyncio.to_thread(self.store.set_meta, "last_success", synced)
                 await asyncio.to_thread(self.store.set_meta, "last_error", "")
+                meta = await asyncio.to_thread(self.store.meta)
+                if not meta.get(INITIAL_IMPORT_META_KEY):
+                    await asyncio.to_thread(self.store.set_meta, INITIAL_IMPORT_META_KEY, "imported")
                 if items:
                     newest = max(str(item.get("start", "")) for item in items)
                     await asyncio.to_thread(self.store.set_meta, "latest_event", newest)
@@ -435,12 +603,64 @@ class LookiCompanionPlugin(Star):
         except ValueError as exc:
             return error_response(str(exc), status_code=404)
 
+    async def api_media(self):
+        """页面用：查事件媒体证据。只返回类型/尺寸/时长/摘要，不返回任何签名 URL。"""
+        try:
+            looki_ids = [part for part in str(request.query.get("looki_ids") or "").split(",") if part.strip()][:50]
+            start, end = request.query.get("start"), request.query.get("end")
+            if not looki_ids:
+                if not start or not end:
+                    raise ValueError("需要 looki_ids 或 start/end")
+                items = await asyncio.to_thread(self.store.query, start, end, "", 100)
+                looki_ids = [item["looki_id"] for item in items if item.get("looki_id")]
+            return json_response(await asyncio.to_thread(self.store.media_evidence, looki_ids))
+        except (ValueError, TypeError) as exc:
+            return error_response(str(exc), status_code=400)
+
+    async def api_media_summary(self):
+        try:
+            start, end = request.query.get("start"), request.query.get("end")
+            if not start or not end:
+                raise ValueError("需要 start 与 end")
+            return json_response(await asyncio.to_thread(self.store.media_summary, start, end))
+        except (ValueError, TypeError) as exc:
+            return error_response(str(exc), status_code=400)
+
     async def api_sync(self):
         return json_response(await self.sync_once())
 
+    async def api_initial_import(self):
+        payload = await request.json(default={})
+        choice = str(payload.get("choice") or "") if isinstance(payload, dict) else ""
+        if choice not in ("import", "skip"):
+            return error_response("首次导入选择无效", status_code=400)
+        state = await self._initial_import_state()
+        if not state["initial_import_required"]:
+            return json_response({**state, "completed": True})
+        if choice == "skip":
+            # 与正在进行的同步串行，避免“暂不导入”和确认导入同时写入不同选择。
+            async with self._sync_lock:
+                state = await self._initial_import_state()
+                if state["initial_import_required"]:
+                    await asyncio.to_thread(self.store.set_meta, INITIAL_IMPORT_META_KEY, "skipped")
+                    state = await self._initial_import_state()
+            return json_response({**state, "saved": True})
+        result = await self.sync_once()
+        state = await self._initial_import_state()
+        return json_response({**result, **state})
+
     async def api_status(self):
         meta = await asyncio.to_thread(self.store.meta)
-        return json_response({**meta, "automatic": bool(self.config.get("auto_sync", True)), "interval_minutes": int(self.config.get("sync_interval_minutes", 5)), "delay_notice": "同步频率只代表插件请求 Looki 的频率；Looki 尚未生成的数据仍不可用。"})
+        return json_response({
+            **meta,
+            "automatic": bool(self.config.get("auto_sync", True)),
+            "interval_minutes": int(self.config.get("sync_interval_minutes", 5)),
+            "backfill_days": max(1, min(int(self.config.get("backfill_days", 7)), 366)),
+            "timezone": str(self.config.get("timezone", "Asia/Shanghai")),
+            "initial_import_required": self._initial_import_required(meta),
+            "initial_import_choice": meta.get(INITIAL_IMPORT_META_KEY, ""),
+            "delay_notice": "同步频率只代表插件请求 Looki 的频率；Looki 尚未生成的数据仍不可用。",
+        })
 
     _MASK = "••••••"
 
@@ -495,6 +715,7 @@ class LookiCompanionPlugin(Star):
             "image_api_key_masked": self._mask_key(image_key),
             "has_image_api_key": bool(image_key),
             "image_provider_ids": self._image_provider_ids(),
+            **(await self._initial_import_state()),
         })
 
     async def api_set_config(self):
@@ -594,4 +815,8 @@ class LookiCompanionPlugin(Star):
             self._sync_task = asyncio.create_task(self._sync_loop())
         elif not want_sync:
             self._sync_task = None
-        return json_response({"saved": sorted(updates), "note": "配置已保存并即时生效。"})
+        return json_response({
+            "saved": sorted(updates),
+            "note": "配置已保存并即时生效。",
+            **(await self._initial_import_state()),
+        })

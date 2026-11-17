@@ -43,6 +43,16 @@
     "description": "保存 Looki 远端原始响应到本地 raw_json 字段（默认关闭，避免落库个人隐私原文；任何接口都不返回该字段）。",
     "default": false
   },
+  "enable_media_evidence": {
+    "type": "bool",
+    "description": "同步时抓取少量事件的媒体证据（照片/视频/音频/摘要的类型、尺寸、时长；不下载原始音视频、不保存签名 URL）。",
+    "default": true
+  },
+  "media_evidence_max_moments": {
+    "type": "int",
+    "description": "每轮同步最多补抓多少个尚未抓过媒体证据的事件（1-30）。",
+    "default": 6
+  },
   "clue_scope": {
     "type": "string",
     "description": "近期生活线索的注入范围。选「仅对管理成员开放」时，管理员私聊与群聊都会在对话前获得少量近期线索；其他人不注入。",

@@ -1,0 +1,34 @@
+{
+  "code": 0,
+  "detail": "OK",
+  "note": "脱敏夹具：结构来自真实 /moments（record list）响应，含游标分页。",
+  "data": {
+    "has_more": true,
+    "next_cursor": "cursor-page-1",
+    "items": [
+      {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "title": "宿舍聊天",
+        "description": "在宿舍和室友聊起周末计划。",
+        "audio_summary": "对话主要围绕周末出行安排。",
+        "media_types": ["IMAGE"],
+        "date": "2026-11-11",
+        "tz": "+08:00",
+        "start_time": "2026-11-11T22:05:00+08:00",
+        "end_time": "2026-11-11T22:35:00+08:00",
+        "search_context": "宿舍,聊天,周末"
+      },
+      {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "title": "操场跑步",
+        "description": "傍晚在操场慢跑两圈。",
+        "media_types": ["VIDEO"],
+        "date": "2026-11-10",
+        "tz": "+08:00",
+        "start_time": "2026-11-10T18:00:00+08:00",
+        "end_time": "2026-11-10T18:30:00+08:00",
+        "search_context": "操场,跑步,锻炼"
+      }
+    ]
+  }
+}
