@@ -1,6 +1,6 @@
 name: astrbot_plugin_looki_companion
 display_name: Looki 日程管理
-desc: 同步并本地保存 Looki 结构化日程，提供日历编辑、对话校正、白名单日程查阅，以及严格时段选图和图生图。测试交流群：QQ群 637906820。
+desc: 把 Looki 记录的现实生活时间轴带进 AstrBot，让 AI 伴侣了解你的日常、找回照片，并生成二次元风格图片。（大人，时代变了：现在轮到虚拟伴侣看你的时间轴了）
 short_desc: Looki 日程同步、日历编辑、白名单查阅、时段选图与图生图。
 author: Reybit
 repo: https://github.com/Reybit4424/astrbot_plugin_looki_companion
