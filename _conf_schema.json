@@ -5,7 +5,7 @@
   },
   "looki_base_url": {
     "type": "string",
-    "description": "Looki API Base URL。",
+    "description": "Looki API Base URL（不怎么需要改）。",
     "default": "https://open.looki.tech/api/v1"
   },
   "auto_sync": {
@@ -43,31 +43,26 @@
     "description": "保存 Looki 远端原始响应到本地 raw_json 字段（默认关闭，避免落库个人隐私原文；任何接口都不返回该字段）。",
     "default": false
   },
-  "enable_media_evidence": {
-    "type": "bool",
-    "description": "同步时抓取少量事件的媒体证据（照片/视频/音频/摘要的类型、尺寸、时长；不下载原始音视频、不保存签名 URL）。",
-    "default": true
-  },
-  "media_evidence_max_moments": {
-    "type": "int",
-    "description": "每轮同步最多补抓多少个尚未抓过媒体证据的事件（1-30）。",
-    "default": 6
-  },
   "clue_scope": {
     "type": "string",
-    "description": "近期生活线索的注入范围。选「仅对管理成员开放」时，管理员私聊与群聊都会在对话前获得少量近期线索；其他人不注入。",
-    "options": ["仅对管理成员开放", "关闭"],
-    "default": "仅对管理成员开放"
+    "description": "近期生活线索的注入范围。「仅对管理员私聊开放」只注入管理员私聊；「仅对白名单用户/群启用」按白名单成员 ID 与群 ID 匹配；「所有人」对所有可触发 Bot 的对象注入；「关闭」不注入。",
+    "options": ["仅对管理员私聊开放", "仅对白名单用户/群启用", "所有人", "关闭"],
+    "default": "仅对管理员私聊开放"
   },
   "clue_days": {
     "type": "int",
-    "description": "近期线索回看天数，最大 31 天。",
+    "description": "近期线索回看天数，最大 31 天；只把范围内已结束的活动当作发生过。",
     "default": 7
   },
   "max_clues": {
     "type": "int",
-    "description": "最多注入的线索条数，最大 10 条。",
+    "description": "最多注入的线索条数，最大 10 条；近期已结束活动优先占用名额。",
     "default": 3
+  },
+  "life_search_window_days": {
+    "type": "int",
+    "description": "自然语言找活动、找照片时向前检索的天数，默认 1095 天（约 3 年），最大 3660 天。",
+    "default": 1095
   },
   "whitelist_user_ids": {
     "type": "string",
@@ -78,6 +73,46 @@
     "type": "string",
     "description": "白名单群 ID，每行一个，也可用逗号分隔。群内所有成员都可查询日程并使用图片功能，不受群聊总开关限制。",
     "default": ""
+  },
+  "show_looki_journals": {
+    "type": "bool",
+    "description": "在时间轴中显示 Looki AI 日志与总结。只影响页面展示，不影响日志同步与任务状态。",
+    "default": true
+  },
+  "hide_deleted_tasks": {
+    "type": "bool",
+    "description": "在任务聚合页隐藏已删除任务。关闭后已删除任务会在列表末尾以删除线显示，可再次点击恢复。",
+    "default": true
+  },
+  "task_expire_days": {
+    "type": "int",
+    "description": "任务逾期天数：来源日期距今超过该天数的未完成任务不再提供给 AstrBot（提醒与检索均排除），但页面上仍可查看。默认 3 天。",
+    "default": 3
+  },
+  "enable_task_reminders": {
+    "type": "bool",
+    "description": "开启后，Bot 会从新出现的未完成任务中筛选值得提醒的事项，并用默认人设的自然话术发送给下方配置的用户。",
+    "default": false
+  },
+  "task_reminder_user_ids": {
+    "type": "string",
+    "description": "接收任务提醒的用户 ID，每行一个，也可用逗号分隔。只发送给这里配置的用户，不复用管理员或日程白名单。",
+    "default": ""
+  },
+  "task_reminder_interval_minutes": {
+    "type": "int",
+    "description": "每个接收人的独立提醒间隔，1-10080 分钟。间隔内最多发送一条、只选择模型认为最有价值的一项任务，默认 60 分钟。",
+    "default": 60
+  },
+  "task_auto_delete_low_value": {
+    "type": "bool",
+    "description": "自动软删除模型评估后未选中的低价值任务，不再提醒；已有提醒记录或本轮被任一接收人选中的任务不会删除。关闭后任务保留，并可在后续提醒中重新评估。",
+    "default": true
+  },
+  "task_completion_reply_enabled": {
+    "type": "bool",
+    "description": "识别提醒接收人在私聊中回复的“完成了”“搞定了”等明确短句，将最近一次提醒且未完成的任务标为完成并同步到 Looki 面板；没有可完成任务时不拦截消息。",
+    "default": true
   },
   "image_candidate_count": {
     "type": "int",
@@ -101,7 +136,7 @@
   },
   "image_generation_mode": {
     "type": "string",
-    "description": "图生图方式：multimodal 使用 AstrBot 多模态模型，openai_compatible 使用兼容 /images/edits 或完整 /images/generations 接口。",
+    "description": "图生图方式（二选一，页面只展开当前模式的设置）：multimodal 使用 AstrBot 已配置的多模态生图模型，openai_compatible 使用兼容 /images/edits 或完整 /images/generations 接口。",
     "options": ["multimodal", "openai_compatible"],
     "default": "multimodal"
   },

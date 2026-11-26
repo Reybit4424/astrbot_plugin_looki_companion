@@ -59,9 +59,57 @@ def event(private=False, sender="user-1", group="group-1"):
 
 
 class ImageToolGuidanceTests(unittest.TestCase):
-    def test_group_admin_guidance_is_independent_of_clue_scope(self):
-        plugin = SimpleNamespace(config={"clue_scope": "关闭"})
-        current_event = SimpleNamespace(is_admin=lambda: True)
+    def test_whitelist_scope_applies_to_admin_in_group(self):
+        plugin = SimpleNamespace(
+            config={"clue_scope": "仅对白名单用户/群启用", "whitelist_group_ids": "allowed-group"},
+            store=SimpleNamespace(clues=lambda *args: ["private clue"]),
+        )
+        current_event = SimpleNamespace(
+            is_admin=lambda: True, is_private_chat=lambda: False,
+            get_sender_id=lambda: "admin", get_group_id=lambda: "other-group",
+        )
+        req = SimpleNamespace(extra_user_content_parts=[])
+        asyncio.run(LookiCompanionPlugin.add_schedule_clues(plugin, current_event, req))
+        self.assertEqual(req.extra_user_content_parts, [])
+
+        current_event.get_group_id = lambda: "allowed-group"
+        asyncio.run(LookiCompanionPlugin.add_schedule_clues(plugin, current_event, req))
+        self.assertTrue(any("private clue" in part.text for part in req.extra_user_content_parts))
+
+    def test_clues_text_states_fact_boundary_and_sync_freshness(self):
+        plugin = SimpleNamespace(
+            config={"clue_scope": "仅对管理员私聊开放", "timezone": "Asia/Shanghai"},
+            store=SimpleNamespace(
+                clues=lambda *args: ["2026-11-24 09:00-10:00《开会》[Looki 记录]"],
+                meta=lambda: {"last_success": "2026-11-25T08:00:00+08:00"},
+            ),
+        )
+        current_event = SimpleNamespace(is_admin=lambda: True, is_private_chat=lambda: True)
+        req = SimpleNamespace(extra_user_content_parts=[])
+        asyncio.run(LookiCompanionPlugin.add_schedule_clues(plugin, current_event, req))
+        text = "\n".join(part.text for part in req.extra_user_content_parts)
+        self.assertIn("是用户本人的真实经历", text)
+        self.assertIn("不是你自己（AI）的亲身经历", text)
+        self.assertIn("最近成功同步", text)
+        self.assertIn("《开会》", text)
+
+    def test_clues_text_reports_missing_sync_state(self):
+        plugin = SimpleNamespace(
+            config={"clue_scope": "仅对管理员私聊开放"},
+            store=SimpleNamespace(clues=lambda *args: ["clue"], meta=lambda: {}),
+        )
+        current_event = SimpleNamespace(is_admin=lambda: True, is_private_chat=lambda: True)
+        req = SimpleNamespace(extra_user_content_parts=[])
+        asyncio.run(LookiCompanionPlugin.add_schedule_clues(plugin, current_event, req))
+        text = "\n".join(part.text for part in req.extra_user_content_parts)
+        self.assertIn("尚无可用的成功同步记录", text)
+
+    def test_admin_private_guidance_injected_and_off_disables(self):
+        plugin = SimpleNamespace(
+            config={"clue_scope": "仅对管理员私聊开放"},
+            store=SimpleNamespace(clues=lambda *args: []),
+        )
+        current_event = SimpleNamespace(is_admin=lambda: True, is_private_chat=lambda: True)
         req = SimpleNamespace(extra_user_content_parts=[])
 
         asyncio.run(LookiCompanionPlugin.add_schedule_clues(plugin, current_event, req))
@@ -69,6 +117,11 @@ class ImageToolGuidanceTests(unittest.TestCase):
         text = "\n".join(part.text for part in req.extra_user_content_parts)
         self.assertIn("send_looki_image", text)
         self.assertIn("不要以不在现场或无法亲自拍摄为由拒绝", text)
+
+        plugin.config["clue_scope"] = "关闭"
+        req_off = SimpleNamespace(extra_user_content_parts=[])
+        asyncio.run(LookiCompanionPlugin.add_schedule_clues(plugin, current_event, req_off))
+        self.assertEqual(req_off.extra_user_content_parts, [])
 
 
 class ImageServiceTests(unittest.TestCase):
@@ -138,10 +191,9 @@ class ImageServiceTests(unittest.TestCase):
         self.assertEqual(captured["limit"], 6)
         self.service._select_candidate.assert_awaited_once()
         self.assertEqual(self.service._download_candidates.await_count, 1)
-        self.assertIn("仅使用原时段候选", result)
+        self.assertEqual(result, "已发送 2026-10-27 09:30:00「图」的照片。")
         self.service._generate_image.assert_not_awaited()
         current_event.send.assert_awaited_once()
-        self.assertIn("只发送了最终 1 张图片", result)
         self.assertTrue(captured["work"].exists())
         self.assertEqual(len(list(captured["work"].glob("candidate_*.png"))), 6)
         self.assertEqual(list(self.service.temp_root.iterdir()), [captured["work"]])
@@ -156,7 +208,7 @@ class ImageServiceTests(unittest.TestCase):
         self.service._download_candidates.assert_not_awaited()
         self.assertEqual(list(self.service.temp_root.iterdir()), [])
 
-    def test_insufficient_original_candidates_use_nearest_same_day_activities(self):
+    def test_target_period_candidates_are_not_mixed_with_neighbours(self):
         self.records.insert(1, {
             "looki_id": "nearest",
             "start_at": "2026-10-27T11:15:00+08:00",
@@ -168,70 +220,111 @@ class ImageServiceTests(unittest.TestCase):
 
         async def download(matches, limit, work):
             calls.append(([item["looki_id"] for item in matches], limit))
-            amount = 1 if len(calls) == 1 else limit
-            candidates = []
-            for index in range(amount):
-                path = work / f"candidate_{len(calls)}_{index}.png"
-                path.write_bytes(PNG)
-                candidates.append({
-                    "path": path,
-                    "title": matches[0]["title"],
-                    "start_at": matches[0]["start_at"],
-                    "end_at": matches[0]["end_at"],
-                })
-            return candidates
+            path = work / "candidate.png"
+            path.write_bytes(PNG)
+            return [{
+                "path": path,
+                "title": matches[0]["title"],
+                "start_at": matches[0]["start_at"],
+                "end_at": matches[0]["end_at"],
+            }]
 
         self.service._download_candidates = AsyncMock(side_effect=download)
-        self.service._select_candidate = AsyncMock(return_value=1)
+        self.service._select_candidate = AsyncMock(return_value=0)
         result = asyncio.run(self.service.send_period_image(
             event(private=True), "2026-10-27", "10:00", "11:00"
         ))
 
-        self.assertEqual(calls, [(["inside"], 3), (["nearest", "outside"], 2)])
-        self.assertIn("最近活动", result)
-        self.assertIn("已纳入同日相邻活动", result)
+        self.assertEqual(calls, [(["inside"], 3)])
+        self.assertIn("时段内", result)
+        self.assertNotIn("附近", result)
 
-    def test_activity_image_uses_matched_period_and_query_preference(self):
-        self.plugin.store.find_latest_looki_activity = lambda query: {
+    def test_nearby_activity_is_used_only_when_target_has_no_media(self):
+        self.records.insert(1, {
+            "looki_id": "nearest",
+            "start_at": "2026-10-27T11:15:00+08:00",
+            "end_at": "2026-10-27T11:30:00+08:00",
+            "title": "最近活动",
+        })
+        calls = []
+
+        async def download(matches, limit, work):
+            calls.append([item["looki_id"] for item in matches])
+            if matches[0]["looki_id"] == "inside":
+                return []
+            path = work / "candidate.png"
+            path.write_bytes(PNG)
+            return [{
+                "path": path,
+                "title": "最近活动",
+                "start_at": "2026-10-27T11:15:00+08:00",
+                "end_at": "2026-10-27T11:30:00+08:00",
+            }]
+
+        self.service._download_candidates = AsyncMock(side_effect=download)
+        self.service._select_candidate = AsyncMock(return_value=0)
+        result = asyncio.run(self.service.send_period_image(
+            event(private=True), "2026-10-27", "10:00", "11:00"
+        ))
+
+        self.assertEqual(calls, [["inside"], ["nearest", "outside"]])
+        self.assertIn("附近", result)
+        self.assertIn("不在你指定的时段内", result)
+
+    def test_image_tool_uses_resolved_activity_period(self):
+        image_service = SimpleNamespace(send_period_image=AsyncMock(return_value="已发送具体照片"))
+        activity = {
             "start_at": "2026-10-24T19:00:00+08:00",
             "end_at": "2026-10-24T20:30:00+08:00",
             "title": "和朋友玩 Switch",
         }
-        self.service.send_period_image = AsyncMock(return_value="已发送")
-        current_event = event(private=True)
-
-        result = asyncio.run(self.service.send_activity_image(current_event, "Switch", "清晰人像"))
-
-        self.service.send_period_image.assert_awaited_once_with(
-            current_event, "2026-10-24", "19:00:00", "20:30:00", "清晰人像", "", "2026-10-24", query="Switch"
+        intent = SimpleNamespace(resolve=lambda query, current: {
+            "status": "ok", "activity": activity, "from_context": False, "reply": "", "result": None,
+        })
+        plugin = SimpleNamespace(
+            config={"allow_group_query": False, "timezone": "Asia/Shanghai"},
+            image_service=image_service,
+            intent=intent,
         )
-        self.assertIn("2026-10-24 19:00:00–20:30:00", result)
-        self.assertIn("和朋友玩 Switch", result)
-        self.assertIn("已发送", result)
+        registry = SimpleNamespace(get_registered_star=lambda _: SimpleNamespace(star_cls=plugin))
+        current_event = event(private=True)
+        context = ContextWrapper(context=SimpleNamespace(context=registry, event=current_event))
 
-    def test_activity_image_converts_offset_to_configured_timezone(self):
-        self.plugin.config["timezone"] = "America/New_York"
-        self.plugin.store.find_latest_looki_activity = lambda query: {
+        result = asyncio.run(SendLookiImageTool().call(context, query="Switch", preference="清晰人像"))
+
+        self.assertEqual(result, "已发送具体照片")
+        image_service.send_period_image.assert_awaited_once_with(
+            current_event, "2026-10-24", "19:00:00", "20:30:00", "清晰人像", "", "2026-10-24",
+            query="Switch",
+        )
+
+    def test_image_tool_converts_activity_offset_to_configured_timezone(self):
+        image_service = SimpleNamespace(send_period_image=AsyncMock(return_value="已发送"))
+        activity = {
             "start_at": "2026-10-24T00:30:00+08:00",
             "end_at": "2026-10-24T01:30:00+08:00",
             "title": "跨时区活动",
         }
-        self.service.send_period_image = AsyncMock(return_value="已发送")
-        current_event = event(private=True)
-
-        result = asyncio.run(self.service.send_activity_image(current_event, "跨时区"))
-
-        self.service.send_period_image.assert_awaited_once_with(
-            current_event, "2026-10-23", "12:30:00", "13:30:00", "", "", "2026-10-23", query="跨时区"
+        intent = SimpleNamespace(resolve=lambda query, current: {
+            "status": "ok", "activity": activity, "from_context": False, "reply": "", "result": None,
+        })
+        plugin = SimpleNamespace(
+            config={"allow_group_query": False, "timezone": "America/New_York"},
+            image_service=image_service,
+            intent=intent,
         )
-        self.assertIn("2026-10-23 12:30:00–13:30:00", result)
+        registry = SimpleNamespace(get_registered_star=lambda _: SimpleNamespace(star_cls=plugin))
+        current_event = event(private=True)
+        context = ContextWrapper(context=SimpleNamespace(context=registry, event=current_event))
 
-    def test_activity_image_supports_cross_midnight_period(self):
-        self.plugin.store.find_latest_looki_activity = lambda query: {
-            "start_at": "2026-10-22T21:41:11+08:00",
-            "end_at": "2026-10-23T00:13:55+08:00",
-            "title": "深夜食堂与Switch游戏局",
-        }
+        asyncio.run(SendLookiImageTool().call(context, query="跨时区"))
+
+        image_service.send_period_image.assert_awaited_once_with(
+            current_event, "2026-10-23", "12:30:00", "13:30:00", "", "", "2026-10-23",
+            query="跨时区",
+        )
+
+    def test_period_image_supports_cross_midnight_window(self):
         query_args = []
         records = [
             {
@@ -265,28 +358,17 @@ class ImageServiceTests(unittest.TestCase):
         self.service._select_candidate = AsyncMock(return_value=0)
         current_event = event(private=True)
 
-        result = asyncio.run(self.service.send_activity_image(current_event, "Switch"))
+        result = asyncio.run(self.service.send_period_image(
+            current_event, "2026-10-22", "21:41:11", "00:13:55", end_date="2026-10-23"
+        ))
 
         self.assertEqual(query_args, [("2026-10-22", "2026-10-23", "", 100)])
         self.assertEqual(
             [item["looki_id"] for item in captured["matches"]],
             ["before-midnight", "after-midnight"],
         )
-        self.assertIn("2026-10-22 21:41:11–2026-10-23 00:13:55", result)
+        self.assertIn("「Switch」", result)
         current_event.send.assert_awaited_once()
-
-    def test_activity_image_without_match_does_not_start_pipeline(self):
-        self.plugin.store.find_latest_looki_activity = lambda query: None
-        self.service._download_candidates = AsyncMock()
-        self.service._select_candidate = AsyncMock()
-        self.service._generate_image = AsyncMock()
-
-        result = asyncio.run(self.service.send_activity_image(event(private=True), "Switch"))
-
-        self.assertIn("未在已保存日程中找到", result)
-        self.service._download_candidates.assert_not_awaited()
-        self.service._select_candidate.assert_not_awaited()
-        self.service._generate_image.assert_not_awaited()
 
     def test_file_url_classifies_images_and_videos_and_keeps_audio_visible(self):
         image = {"file": {"media_type": "IMAGE", "temporary_url": "https://looki.test/image"}}
@@ -417,7 +499,7 @@ class ImageServiceTests(unittest.TestCase):
         process.wait.assert_awaited_once()
         self.assertFalse(target.with_suffix(".mp4").exists())
 
-    def test_mixed_candidates_use_spread_order_and_skip_failed_video(self):
+    def test_mixed_candidates_photo_first_and_stop_at_limit(self):
         files = [
             {"file": {"media_type": "VIDEO", "temporary_url": "https://looki.test/bad-video"}},
             {"file": {"media_type": "IMAGE", "temporary_url": "https://looki.test/image-1"}},
@@ -475,12 +557,16 @@ class ImageServiceTests(unittest.TestCase):
         ):
             candidates = asyncio.run(self.service._download_candidates([self.records[0]], 3, work))
 
-        self.assertEqual([item["path"].name for item in candidates], ["candidate_2_1.jpg", "candidate_3.png", "candidate_4.png"])
+        self.assertEqual([item["path"].name for item in candidates], ["candidate_1.png", "candidate_2.png", "candidate_3_1.jpg"])
         self.assertEqual(max_active, 2)
         self.assertEqual(len(started), 4)
-        self.assertNotIn("https://looki.test/image-3", started)
-        self.assertEqual(self.service._download_video_frames.await_count, 2)
-        self.assertEqual(self.service._download_image.await_count, 2)
+        # 照片优先：先取 3 张 IMAGE，再取 1 个 VIDEO 抽帧，limit 达成后不再尝试坏视频
+        self.assertEqual(started, [
+            "https://looki.test/image-1", "https://looki.test/extra",
+            "https://looki.test/video-2", "https://looki.test/image-3",
+        ])
+        self.assertEqual(self.service._download_video_frames.await_count, 1)
+        self.assertEqual(self.service._download_image.await_count, 3)
         self.assertTrue(all(item["path"].exists() for item in candidates))
 
     def test_candidates_round_robin_activities_and_space_files(self):
@@ -657,29 +743,33 @@ class ImageServiceTests(unittest.TestCase):
             current_event, "2026-10-27", "10:00", "11:00", "", ""
         )
 
-    def test_image_tool_routes_activity_and_validates_mode_parameters(self):
-        image_service = SimpleNamespace(
-            send_period_image=AsyncMock(),
-            send_activity_image=AsyncMock(return_value="活动已发送"),
+    def test_image_tool_passes_through_clarify_and_missing_replies(self):
+        image_service = SimpleNamespace(send_period_image=AsyncMock(return_value="已发送"))
+        replies = {
+            "": {"status": "missing", "activity": None, "from_context": False, "reply": "想找哪一天、或者哪件事的照片？", "result": None},
+            "生日": {"status": "clarify", "activity": None, "from_context": False, "reply": "找到多条可能的记录，请补充日期。", "result": None},
+            "Switch": {"status": "ok", "activity": {"start_at": "2026-10-24T19:00:00+08:00", "end_at": "2026-10-24T20:00:00+08:00", "title": "Switch"}, "from_context": False, "reply": "", "result": None},
+        }
+        intent = SimpleNamespace(resolve=lambda query, current: replies[query])
+        plugin = SimpleNamespace(
+            config={"allow_group_query": False, "timezone": "Asia/Shanghai"},
+            image_service=image_service,
+            intent=intent,
         )
-        plugin = SimpleNamespace(config={"allow_group_query": False}, image_service=image_service)
         registry = SimpleNamespace(get_registered_star=lambda _: SimpleNamespace(star_cls=plugin))
         current_event = event(private=True)
         context = ContextWrapper(context=SimpleNamespace(context=registry, event=current_event))
         tool = SendLookiImageTool()
 
-        result = asyncio.run(tool.call(context, query="Switch", preference="清晰画面"))
-        self.assertEqual(result, "活动已发送")
-        image_service.send_activity_image.assert_awaited_once_with(
-            current_event, "Switch", "清晰画面", ""
-        )
+        self.assertIn("想找哪一天", asyncio.run(tool.call(context)))
         image_service.send_period_image.assert_not_awaited()
-
-        missing = asyncio.run(tool.call(context))
-        self.assertIn("或提供 query", missing)
+        self.assertIn("找到多条", asyncio.run(tool.call(context, query="生日")))
+        image_service.send_period_image.assert_not_awaited()
         partial = asyncio.run(tool.call(context, date="2026-10-27", start_time="10:00"))
         self.assertIn("需要同时提供", partial)
-        image_service.send_activity_image.assert_awaited_once()
+        image_service.send_period_image.assert_not_awaited()
+        self.assertEqual(asyncio.run(tool.call(context, query="Switch")), "已发送")
+        image_service.send_period_image.assert_awaited_once()
 
     def test_multimodal_generation_uses_reference_and_returns_image(self):
         reference = self.root / "reference.png"

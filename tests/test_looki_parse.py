@@ -1,7 +1,9 @@
+import asyncio
 import json
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 from astrbot_plugin_looki_companion.main import (
@@ -10,8 +12,7 @@ from astrbot_plugin_looki_companion.main import (
     moment_media_types,
     parse_moment,
 )
-from astrbot_plugin_looki_companion.media_service import describe_entry, normalize_media_type, summary_entry
-from astrbot_plugin_looki_companion.schedule_store import ScheduleStore, filter_task_lines
+from astrbot_plugin_looki_companion.schedule_store import filter_task_lines
 
 FIXTURES = Path(__file__).parent / "fixtures"
 ZONE = ZoneInfo("Asia/Shanghai")
@@ -49,6 +50,21 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(item)
         self.assertEqual(reason, "起止时间格式无效")
 
+    def test_parse_moment_uses_local_date_after_timezone_conversion(self):
+        moment = {
+            "id": "utc-midnight",
+            "date": "2026-10-24",
+            "start_time": "2026-10-23T16:30:00+00:00",
+            "end_time": "2026-10-23T17:30:00+00:00",
+        }
+
+        item, reason = parse_moment(moment, ZONE)
+
+        self.assertEqual(reason, "")
+        self.assertEqual(item["date"], "2026-10-24")
+        self.assertEqual(item["start"], "2026-10-24T00:30:00+08:00")
+        self.assertEqual(item["end"], "2026-10-24T01:30:00+08:00")
+
     def test_capture_mode_prefers_declared_value(self):
         self.assertEqual(capture_mode_of({"capture_mode": "AUTO"}, []), "auto")
         self.assertEqual(capture_mode_of({"capture_mode": "weird"}, []), "unknown")
@@ -61,31 +77,30 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(moment_media_types({"cover_file": {"media_type": "IMAGE"}}), ["photo"])
 
 
-class MediaServiceTests(unittest.TestCase):
-    def test_normalize_media_type(self):
-        self.assertEqual(normalize_media_type("IMAGE"), "photo")
-        self.assertEqual(normalize_media_type("audio/mp4"), "audio")
-        self.assertEqual(normalize_media_type("VIDEO"), "video")
-        self.assertEqual(normalize_media_type("SENSOR"), "unknown")
+class PartialSyncTests(unittest.TestCase):
+    def test_moments_partial_failure_is_not_reported_as_success(self):
+        from astrbot_plugin_looki_companion.main import LookiScheduleProvider
 
-    def test_describe_entries_from_real_shape(self):
-        items = load("files_page1.json")["data"]["items"]
-        entries = [describe_entry(item, index) for index, item in enumerate(items)]
-        self.assertEqual([entry["media_type"] for entry in entries], ["photo", "video", "audio", "unknown"])
-        self.assertEqual(entries[0]["width"], 1600)
-        self.assertTrue(entries[0]["has_thumbnail"])
-        self.assertEqual(entries[1]["duration_ms"], 5119)
-        self.assertEqual(entries[2]["mime_type"], "audio/mp4")
-        self.assertEqual(entries[2]["duration_ms"], 90000)
-        self.assertEqual(entries[2]["availability"], "available")
-        self.assertEqual(entries[3]["availability"], "unsupported")
-        self.assertEqual(entries[3]["remote_file_id"], "file-004")
+        provider = LookiScheduleProvider.__new__(LookiScheduleProvider)
+        provider.timeout = 1
+        provider._fetch_day = AsyncMock(side_effect=[[], RuntimeError("network")])
 
-    def test_summary_entry_is_text_evidence(self):
-        entry = summary_entry("moment-1", " 期间伴有  简短对话 ")
-        self.assertEqual(entry["media_type"], "summary")
-        self.assertEqual(entry["text_excerpt"], "期间伴有 简短对话")
-        self.assertIsNone(summary_entry("moment-1", "   "))
+        result = asyncio.run(provider.fetch(date(2026, 11, 20), date(2026, 11, 21), "Asia/Shanghai"))
+
+        self.assertEqual(result, [])
+        self.assertIn("部分日期同步失败", provider.last_sync_error)
+
+    def test_journals_partial_failure_is_not_reported_as_success(self):
+        from astrbot_plugin_looki_companion.main import LookiScheduleProvider
+
+        provider = LookiScheduleProvider.__new__(LookiScheduleProvider)
+        provider.timeout = 1
+        provider._fetch_journals_day = AsyncMock(side_effect=[[], RuntimeError("network")])
+
+        result = asyncio.run(provider.fetch_journals(date(2026, 11, 20), date(2026, 11, 21), "Asia/Shanghai"))
+
+        self.assertEqual(result, [])
+        self.assertIn("部分日期同步失败", provider.last_sync_error)
 
 
 class TaskLineFilterTests(unittest.TestCase):
@@ -97,51 +112,6 @@ class TaskLineFilterTests(unittest.TestCase):
     def test_real_world_summary_list_is_preserved(self):
         text = "- **关于近况与宿舍**: 和室友聊了周末安排\n- **社交互动**: 一起去了食堂"
         self.assertEqual(filter_task_lines(text), text)
-
-
-class MediaEvidenceStoreTests(unittest.TestCase):
-    def setUp(self):
-        import tempfile
-
-        self.temp = tempfile.TemporaryDirectory()
-        self.store = ScheduleStore(Path(self.temp.name) / "schedules.sqlite3")
-
-    def tearDown(self):
-        self.store.close()
-        self.temp.cleanup()
-
-    def _seed(self):
-        self.store.upsert_remote([{
-            "looki_id": "moment-1", "date": "2026-11-12",
-            "start": "2026-11-12T08:10:00+08:00", "end": "2026-11-12T08:40:00+08:00",
-            "title": "课前安静的教室", "description": "", "audio_summary": "简短对话",
-            "keywords": [], "media_types": ["photo"], "capture_mode": "photo",
-        }])
-
-    def test_upsert_is_idempotent_and_summary_counts(self):
-        self._seed()
-        items = load("files_page1.json")["data"]["items"]
-        entries = [describe_entry(item, index) for index, item in enumerate(items)]
-        self.assertEqual(self.store.sync_media_evidence("moment-1", entries), 4)
-        self.assertEqual(self.store.sync_media_evidence("moment-1", entries), 4)
-        grouped = self.store.media_evidence(["moment-1"])["moment-1"]
-        self.assertEqual(len(grouped), 4)
-        counts = self.store.media_summary("2026-11-12", "2026-11-12")["moment-1"]
-        self.assertEqual(counts, {"photo": 1, "video": 1, "audio": 1, "unknown": 1})
-
-    def test_audio_is_kept_not_dropped(self):
-        self._seed()
-        audio = describe_entry({"id": "a1", "file": {"media_type": "AUDIO", "mime_type": "audio/mpeg"}}, 0)
-        self.store.sync_media_evidence("moment-1", [audio])
-        grouped = self.store.media_evidence(["moment-1"])["moment-1"]
-        self.assertEqual(grouped[0]["media_type"], "audio")
-
-    def test_pending_media_moments_marks_after_sync(self):
-        self._seed()
-        pending = self.store.pending_media_moments("2026-11-12", "2026-11-12", 6)
-        self.assertEqual([row["looki_id"] for row in pending], ["moment-1"])
-        self.store.sync_media_evidence("moment-1", [])
-        self.assertEqual(self.store.pending_media_moments("2026-11-12", "2026-11-12", 6), [])
 
 
 if __name__ == "__main__":

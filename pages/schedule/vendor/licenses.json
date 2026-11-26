@@ -1,0 +1,20 @@
+{
+  "files": {
+    "marked.umd.js": {
+      "name": "Marked",
+      "version": "18.2.1",
+      "license": "MIT",
+      "source": "https://unpkg.com/marked@18.2.1/lib/marked.umd.js",
+      "license_file": "marked.LICENSE.txt",
+      "sha256": "bb95d4c15f1289f78486eaacebf3bb18688475ed58a040ef762ed49337090542"
+    },
+    "purify.min.js": {
+      "name": "DOMPurify",
+      "version": "3.5.0",
+      "license": "(MPL-2.0 OR Apache-2.0)",
+      "source": "https://unpkg.com/dompurify@3.5.0/dist/purify.min.js",
+      "license_file": "DOMPurify.LICENSE.txt",
+      "sha256": "f69a46022ab1f53e969c8ebbca98172c8995785a9b3be72ea4a12d25b1a1bf67"
+    }
+  }
+}

@@ -3,13 +3,19 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import threading
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-SCHEMA_VERSION = 6
+try:
+    from .journal_service import task_key
+except ImportError:  # 测试可能以顶层模块方式导入
+    from journal_service import task_key
+
+SCHEMA_VERSION = 10
 
 
 def _iso(value: str) -> str:
@@ -34,6 +40,17 @@ def _title_key(title: Any) -> str:
 def _content_key(day: str, start: str, title: Any) -> str:
     """内容签名：Looki 换 id 重新下发同一活动时，用它识别“同一条日程”。"""
     return "content:" + "|".join((date.fromisoformat(day).isoformat(), _instant(start), _title_key(title)))
+
+
+def _titles_compatible(a: Any, b: Any) -> bool:
+    """判断两个标题是否像同一次活动的不同表述（相等或互相包含）。"""
+    left, right = _title_key(a), _title_key(b)
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    short, long = (left, right) if len(left) <= len(right) else (right, left)
+    return len(short) >= 2 and short in long
 
 
 def _key(item: dict[str, Any]) -> str:
@@ -71,11 +88,31 @@ def _strip_markers(value: Any) -> str:
     return "\n".join(lines).strip()
 
 
+def _clue_excerpt(value: Any, limit: int = 80) -> str:
+    """把描述压成单行短摘要，避免把全文或换行带进上下文。"""
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def is_task_expired(day: str, today: date, expire_days: int) -> bool:
+    """任务来源日期距今天超过 expire_days 天即逾期；等于该天数仍有效。"""
+    return (today - date.fromisoformat(str(day))).days > max(0, int(expire_days))
+
+
+# 页面与提醒一律排除未匹配日志下的任务；日志行缺失的历史任务保持可见。
+_MATCHED_TASK_SCOPE = (
+    "NOT EXISTS (SELECT 1 FROM looki_journals j"
+    " WHERE j.id={alias}.journal_id AND j.match_state='unmatched')"
+)
+
+
 class ScheduleStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path, check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
+        self._db_path = str(path)
+        self._db_local = threading.local()
+        self._db_connections: list[sqlite3.Connection] = []
+        self._db_connections_lock = threading.Lock()
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS schedules (
@@ -88,8 +125,7 @@ class ScheduleStore:
                 raw_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                 media_types TEXT NOT NULL DEFAULT '[]',
                 capture_mode TEXT NOT NULL DEFAULT 'unknown',
-                remote_updated_at TEXT, remote_deleted INTEGER NOT NULL DEFAULT 0,
-                media_synced_at TEXT
+                remote_updated_at TEXT, remote_deleted INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS sync_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS schedule_corrections (
@@ -105,7 +141,7 @@ class ScheduleStore:
             self.db.execute("ALTER TABLE schedules ADD COLUMN description TEXT NOT NULL DEFAULT ''")
         if "audio_summary" not in columns:
             self.db.execute("ALTER TABLE schedules ADD COLUMN audio_summary TEXT NOT NULL DEFAULT ''")
-        # schema v4：来源模式、远端状态与媒体同步状态。只加列，不重建表、不覆盖人工编辑。
+        # schema v4：来源模式与远端状态。只加列，不重建表、不覆盖人工编辑。
         if "media_types" not in columns:
             self.db.execute("ALTER TABLE schedules ADD COLUMN media_types TEXT NOT NULL DEFAULT '[]'")
         if "capture_mode" not in columns:
@@ -114,25 +150,74 @@ class ScheduleStore:
             self.db.execute("ALTER TABLE schedules ADD COLUMN remote_updated_at TEXT")
         if "remote_deleted" not in columns:
             self.db.execute("ALTER TABLE schedules ADD COLUMN remote_deleted INTEGER NOT NULL DEFAULT 0")
-        if "media_synced_at" not in columns:
-            self.db.execute("ALTER TABLE schedules ADD COLUMN media_synced_at TEXT")
+        # schema v7：Looki AI 日志与由日志提取的任务。只加表，不改动既有日程数据。
         self.db.execute(
-            "CREATE TABLE IF NOT EXISTS media_evidence ("
-            "id TEXT PRIMARY KEY, schedule_id TEXT, looki_id TEXT NOT NULL,"
-            "evidence_key TEXT UNIQUE NOT NULL, media_type TEXT NOT NULL,"
-            "remote_file_id TEXT, mime_type TEXT NOT NULL DEFAULT '',"
-            "width INTEGER, height INTEGER, duration_ms INTEGER,"
-            "has_thumbnail INTEGER NOT NULL DEFAULT 0,"
-            "availability TEXT NOT NULL DEFAULT 'available',"
-            "text_excerpt TEXT NOT NULL DEFAULT '',"
+            "CREATE TABLE IF NOT EXISTS looki_journals ("
+            "id TEXT PRIMARY KEY, day TEXT NOT NULL, type TEXT NOT NULL DEFAULT '',"
+            "title TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '',"
+            "content TEXT NOT NULL DEFAULT '', recorded_at TEXT NOT NULL DEFAULT '',"
+            "match_state TEXT NOT NULL DEFAULT 'unmatched', schedule_id TEXT,"
+            "media_count INTEGER NOT NULL DEFAULT 0, user_edited INTEGER NOT NULL DEFAULT 0,"
             "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
         )
-        self.db.execute("CREATE INDEX IF NOT EXISTS idx_media_looki ON media_evidence(looki_id)")
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS looki_tasks ("
+            "id TEXT PRIMARY KEY, task_key TEXT UNIQUE NOT NULL, journal_id TEXT NOT NULL,"
+            "day TEXT NOT NULL, schedule_id TEXT, body TEXT NOT NULL,"
+            "section TEXT NOT NULL DEFAULT '', source_line TEXT NOT NULL DEFAULT '',"
+            "done INTEGER NOT NULL DEFAULT 0, done_day TEXT, reminded_at TEXT,"
+            "deleted INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0,"
+            "user_edited INTEGER NOT NULL DEFAULT 0,"
+            "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS task_reminders ("
+            "task_id TEXT NOT NULL, user TEXT NOT NULL, reminded_at TEXT NOT NULL,"
+            "message TEXT NOT NULL DEFAULT '',"
+            "PRIMARY KEY (task_id, user))"
+        )
+        self.db.execute("CREATE INDEX IF NOT EXISTS idx_journals_day ON looki_journals(day)")
+        self.db.execute("CREATE INDEX IF NOT EXISTS idx_journals_schedule ON looki_journals(schedule_id)")
+        self.db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_day ON looki_tasks(day)")
+        self.db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_journal ON looki_tasks(journal_id)")
+        journal_columns = {r["name"] for r in self.db.execute("PRAGMA table_info(looki_journals)")}
+        if "user_edited" not in journal_columns:
+            self.db.execute("ALTER TABLE looki_journals ADD COLUMN user_edited INTEGER NOT NULL DEFAULT 0")
+        task_columns = {r["name"] for r in self.db.execute("PRAGMA table_info(looki_tasks)")}
+        for name, ddl in (
+            ("deleted", "INTEGER NOT NULL DEFAULT 0"),
+            ("sort_order", "INTEGER NOT NULL DEFAULT 0"),
+            ("user_edited", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if name not in task_columns:
+                self.db.execute(f"ALTER TABLE looki_tasks ADD COLUMN {name} {ddl}")
+        # schema v10：保存实际发送的提醒原文，供后续私聊还原任务上下文。
+        reminder_columns = {r["name"] for r in self.db.execute("PRAGMA table_info(task_reminders)")}
+        if "message" not in reminder_columns:
+            self.db.execute("ALTER TABLE task_reminders ADD COLUMN message TEXT NOT NULL DEFAULT ''")
         self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         self.db.commit()
 
+    @property
+    def db(self) -> sqlite3.Connection:
+        """每个工作线程使用独立连接，避免事务与游标在线程间互相干扰。"""
+        connection = getattr(self._db_local, "connection", None)
+        if connection is None:
+            connection = sqlite3.connect(self._db_path, check_same_thread=False, timeout=30)
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA busy_timeout=30000")
+            with self._db_connections_lock:
+                self._db_connections.append(connection)
+            self._db_local.connection = connection
+        return connection
+
     def close(self):
-        self.db.close()
+        with self._db_connections_lock:
+            connections = list(self._db_connections)
+            self._db_connections.clear()
+        self._db_local.connection = None
+        for connection in connections:
+            connection.close()
 
     def _row(self, row: sqlite3.Row) -> dict[str, Any]:
         item = dict(row)
@@ -167,7 +252,10 @@ class ScheduleStore:
                     rows.append(row)
                     if len(rows) >= limit:
                         break
-        items = [self._row(r) for r in rows[:limit]]
+        return self._with_corrections([self._row(r) for r in rows[:limit]])
+
+    def _with_corrections(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """给日程补上对话校正注记，保持既有返回值结构。"""
         for item in items:
             item["corrections"] = []
         if items:
@@ -177,6 +265,18 @@ class ScheduleStore:
             for correction in corrections:
                 by_id[correction["schedule_id"]]["corrections"].append({"id": correction["id"], "note": correction["note"], "created_at": correction["created_at"]})
         return items
+
+    def life_schedules(self, start_day: str, end_day: str) -> list[dict[str, Any]]:
+        """检索层只读查询：范围内全部未删除日程（不限条数），含人工与 Looki 来源及校正注记。"""
+        start = date.fromisoformat(start_day)
+        end = date.fromisoformat(end_day)
+        if end < start or (end - start).days > 3660:
+            raise ValueError("日期范围无效或超过 3660 天")
+        rows = self.db.execute(
+            "SELECT * FROM schedules WHERE day BETWEEN ? AND ? AND deleted=0 ORDER BY start_at",
+            (start_day, end_day),
+        ).fetchall()
+        return self._with_corrections([self._row(row) for row in rows])
 
     def search(self, start_day: str, end_day: str, query: str = "", limit: int = 50) -> tuple[list[dict[str, Any]], bool]:
         """按关键词检索；未命中时退化为该范围内的全部记录，第二个返回值表示关键词是否直接命中。"""
@@ -282,10 +382,12 @@ class ScheduleStore:
                 exact.append(row)
             elif row["source"] == "looki" and row["looki_id"]:
                 relaxed.append(row)
-        for bucket in (exact, relaxed):
-            if bucket:
-                # 优先保留：未删除 > 人工编辑 > 创建更早
-                return min(bucket, key=lambda r: (r["deleted"], 0 if r["user_edited"] else 1, r["created_at"]))
+        if exact:
+            # 优先保留：未删除 > 人工编辑 > 创建更早
+            return min(exact, key=lambda r: (r["deleted"], 0 if r["user_edited"] else 1, r["created_at"]))
+        if len(relaxed) == 1:
+            return relaxed[0]
+        # 同一起点存在多条标题不同的 Looki 记录时无法判断归属，宁可新增也不猜
         return None
 
     def merge_content_duplicates(self) -> int:
@@ -320,7 +422,8 @@ class ScheduleStore:
 
         Looki 会先下发若干短片段，之后把同一段合并成更长的片段并以新 id 重新下发，
         于是同一天出现“同开始或同结束、时间相互重叠”的多条记录。
-        这里按天分组，只要两条记录时间重叠且开始或结束时刻相同就归为一组，
+        这里按天分组，开始时刻相同即可归为一组；仅结束时刻相同时还要求标题互相兼容，
+        避免把首尾相接、内容不同的两段活动误并成一条。
         保留跨度最大的一条（跨度相同取创建更晚），其余纯 Looki、未编辑、未删除的记录软删除。
         """
         rows = []
@@ -349,7 +452,9 @@ class ScheduleStore:
                         a, b = day_rows[i], day_rows[j]
                         if a[1] >= b[2] or b[1] >= a[2]:
                             continue
-                        if a[1] == b[1] or a[2] == b[2]:
+                        same_start = a[1] == b[1]
+                        same_end = a[2] == b[2] and _titles_compatible(a[0]["title"], b[0]["title"])
+                        if same_start or same_end:
                             parent[find(i)] = find(j)
                 clusters: dict[int, list[int]] = {}
                 for i in candidates:
@@ -410,6 +515,22 @@ class ScheduleStore:
             self.db.execute("INSERT INTO schedule_corrections (id,schedule_id,note,created_at) VALUES (?,?,?,?)", (correction_id, item_id, note, now))
         return {"id": correction_id, "schedule_id": item_id, "note": note, "created_at": now, "title": schedule["title"], "date": schedule["day"]}
 
+    def update_correction(self, correction_id: str, note: str) -> dict[str, str]:
+        note = str(note).strip()
+        if not note or len(note) > 2000:
+            raise ValueError("校正注记不能为空且不能超过 2000 字")
+        with self.db:
+            cur = self.db.execute("UPDATE schedule_corrections SET note=? WHERE id=?", (note, correction_id))
+            if not cur.rowcount:
+                raise ValueError("校正记录不存在")
+        return {"id": correction_id, "note": note}
+
+    def delete_correction(self, correction_id: str) -> None:
+        with self.db:
+            cur = self.db.execute("DELETE FROM schedule_corrections WHERE id=?", (correction_id,))
+            if not cur.rowcount:
+                raise ValueError("校正记录不存在")
+
     def delete(self, item_id: str):
         with self.db:
             cur = self.db.execute("UPDATE schedules SET deleted=1,user_edited=1,updated_at=? WHERE id=? AND deleted=0", (datetime.now().astimezone().isoformat(), item_id))
@@ -423,92 +544,512 @@ class ScheduleStore:
     def meta(self) -> dict[str, str]:
         return dict(self.db.execute("SELECT key,value FROM sync_meta"))
 
-    def pending_media_moments(self, start_day: str, end_day: str, limit: int = 6) -> list[dict[str, Any]]:
-        """已同步事件里还没抓过媒体证据的 looki_id，按时间倒序取前 limit 个。"""
-        rows = self.db.execute(
-            "SELECT looki_id, audio_summary FROM schedules WHERE day BETWEEN ? AND ? AND deleted=0 "
-            "AND looki_id IS NOT NULL AND looki_id != '' AND media_synced_at IS NULL "
-            "ORDER BY start_at DESC LIMIT ?",
-            (start_day, end_day, max(1, min(int(limit), 50))),
-        ).fetchall()
-        return [{"looki_id": r["looki_id"], "audio_summary": r["audio_summary"] or ""} for r in rows]
-
-    def sync_media_evidence(self, looki_id: str, entries: list[dict[str, Any]], mark_synced: bool = True) -> int:
-        """按远端文件 ID upsert 媒体证据；未知类型也保留（availability=unsupported），不再静默丢弃。"""
+    # ---- Looki AI 日志与任务（schema v7） ----
+    def upsert_journals(self, items: list[dict[str, Any]]) -> int:
+        """写入日志并同步其任务；按远端日志 id 幂等，重复同步不会重复建任务。"""
         now = datetime.now().astimezone().isoformat()
-        schedule = self.db.execute("SELECT id FROM schedules WHERE looki_id=? ORDER BY deleted LIMIT 1", (looki_id,)).fetchone()
-        schedule_id = schedule["id"] if schedule else None
         saved = 0
         with self.db:
-            for entry in entries:
-                if not isinstance(entry, dict) or not entry.get("evidence_key"):
+            for item in items:
+                if not isinstance(item, dict):
                     continue
-                self.db.execute(
-                    "INSERT INTO media_evidence (id,schedule_id,looki_id,evidence_key,media_type,remote_file_id,mime_type,width,height,duration_ms,has_thumbnail,availability,text_excerpt,created_at,updated_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-                    "ON CONFLICT(evidence_key) DO UPDATE SET schedule_id=excluded.schedule_id,media_type=excluded.media_type,"
-                    "remote_file_id=excluded.remote_file_id,mime_type=excluded.mime_type,width=excluded.width,height=excluded.height,"
-                    "duration_ms=excluded.duration_ms,has_thumbnail=excluded.has_thumbnail,availability=excluded.availability,"
-                    "text_excerpt=excluded.text_excerpt,updated_at=excluded.updated_at",
-                    (
-                        str(uuid.uuid4()), schedule_id, looki_id, f"looki:{looki_id}:{entry['evidence_key']}",
-                        str(entry.get("media_type") or "unknown"), str(entry.get("remote_file_id") or ""),
-                        str(entry.get("mime_type") or ""), entry.get("width"), entry.get("height"),
-                        entry.get("duration_ms"), 1 if entry.get("has_thumbnail") else 0,
-                        str(entry.get("availability") or "available"), str(entry.get("text_excerpt") or "")[:300],
-                        now, now,
-                    ),
+                journal_id = str(item.get("id") or "").strip()
+                if not journal_id:
+                    continue
+                try:
+                    day = date.fromisoformat(str(item.get("day") or "")).isoformat()
+                except ValueError:
+                    continue
+                schedule_id = str(item.get("schedule_id") or "").strip() or None
+                match_state = "matched" if schedule_id else "unmatched"
+                values = (
+                    day, str(item.get("type") or ""), str(item.get("title") or ""),
+                    str(item.get("description") or ""), str(item.get("content") or ""),
+                    str(item.get("recorded_at") or ""), match_state, schedule_id,
+                    int(item.get("media_count") or 0), now,
                 )
+                existing = self.db.execute("SELECT id,user_edited FROM looki_journals WHERE id=?", (journal_id,)).fetchone()
+                if existing is None:
+                    self.db.execute(
+                        "INSERT INTO looki_journals (day,type,title,description,content,recorded_at,match_state,"
+                        "schedule_id,media_count,updated_at,id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        values + (journal_id, now),
+                    )
+                elif existing["user_edited"]:
+                    # 本地编辑过的日志：同步只更新归属与远端元信息，不覆盖正文，也不重建任务
+                    self.db.execute(
+                        "UPDATE looki_journals SET day=?,type=?,recorded_at=?,match_state=?,schedule_id=?,"
+                        "media_count=?,updated_at=? WHERE id=?",
+                        (
+                            day, str(item.get("type") or ""), str(item.get("recorded_at") or ""),
+                            match_state, schedule_id, int(item.get("media_count") or 0), now, journal_id,
+                        ),
+                    )
+                    saved += 1
+                    continue
+                else:
+                    self.db.execute(
+                        "UPDATE looki_journals SET day=?,type=?,title=?,description=?,content=?,recorded_at=?,"
+                        "match_state=?,schedule_id=?,media_count=?,updated_at=? WHERE id=?",
+                        values + (journal_id,),
+                    )
                 saved += 1
-            if mark_synced:
-                self.db.execute("UPDATE schedules SET media_synced_at=? WHERE looki_id=?", (now, looki_id))
+                if isinstance(item.get("tasks"), list):
+                    self._sync_journal_tasks(journal_id, day, schedule_id, item["tasks"])
         return saved
 
-    def media_evidence(self, looki_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
-        result: dict[str, list[dict[str, Any]]] = {}
-        if not looki_ids:
-            return result
-        placeholders = ",".join("?" for _ in looki_ids)
-        rows = self.db.execute(
-            f"SELECT looki_id,evidence_key,media_type,mime_type,width,height,duration_ms,has_thumbnail,availability,text_excerpt "
-            f"FROM media_evidence WHERE looki_id IN ({placeholders}) ORDER BY created_at",
-            tuple(looki_ids),
-        ).fetchall()
-        for row in rows:
-            item = dict(row)
-            looki_id = item.pop("looki_id")
-            item.pop("evidence_key", None)
-            item["has_thumbnail"] = bool(item["has_thumbnail"])
-            result.setdefault(looki_id, []).append(item)
-        return result
+    def update_journal(self, journal_id: str, payload: dict[str, Any], tasks: list[Any] | None = None) -> None:
+        """本地编辑日志正文/标题/描述；标记 user_edited 后远端同步不再覆盖。
 
-    def media_summary(self, start_day: str, end_day: str) -> dict[str, dict[str, int]]:
-        """页面用：按事件汇总各媒体类型证据数量。"""
+        传入 tasks 时按新正文重建任务清单，源 Markdown 中已删除的任务会被物理删除。
+        """
+        fields: dict[str, str] = {}
+        for name, limit in (("title", 200), ("description", 20000), ("content", 50000)):
+            if name in payload:
+                value = str(payload[name] or "").strip()
+                if len(value) > limit:
+                    raise ValueError(f"{name} 过长")
+                fields[name] = value
+        if not fields:
+            raise ValueError("没有可保存的内容")
+        now = datetime.now().astimezone().isoformat()
+        with self.db:
+            journal = self.db.execute("SELECT day,schedule_id FROM looki_journals WHERE id=?", (journal_id,)).fetchone()
+            if journal is None:
+                raise ValueError("日志不存在")
+            assignments = ",".join(f"{name}=?" for name in fields)
+            self.db.execute(
+                f"UPDATE looki_journals SET {assignments},user_edited=1,updated_at=? WHERE id=?",
+                (*fields.values(), now, journal_id),
+            )
+            if tasks is not None:
+                self._sync_journal_tasks(journal_id, journal["day"], journal["schedule_id"], tasks)
+
+    def _sync_journal_tasks(self, journal_id: str, day: str, schedule_id: str | None, tasks: list[Any]) -> None:
+        now = datetime.now().astimezone().isoformat()
+        keys: set[str] = set()
+        for sort_order, task in enumerate(tasks):
+            if not isinstance(task, dict):
+                continue
+            body = str(task.get("body") or "").strip()
+            if not body:
+                continue
+            key = task_key(journal_id, body)
+            if key in keys:
+                continue
+            keys.add(key)
+            existing = self.db.execute("SELECT id,user_edited FROM looki_tasks WHERE task_key=?", (key,)).fetchone()
+            if existing is not None:
+                # 保留本地的完成状态、删除标记、排序与提醒记录；正文被人工改过时也不再覆盖
+                if existing["user_edited"]:
+                    self.db.execute(
+                        "UPDATE looki_tasks SET section=?,source_line=?,day=?,schedule_id=?,updated_at=? WHERE task_key=?",
+                        (
+                            str(task.get("section") or ""), str(task.get("source_line") or ""),
+                            day, schedule_id, now, key,
+                        ),
+                    )
+                else:
+                    self.db.execute(
+                        "UPDATE looki_tasks SET body=?,section=?,source_line=?,day=?,schedule_id=?,updated_at=? WHERE task_key=?",
+                        (
+                            body, str(task.get("section") or ""), str(task.get("source_line") or ""),
+                            day, schedule_id, now, key,
+                        ),
+                    )
+                continue
+            done = 1 if task.get("done") else 0
+            self.db.execute(
+                "INSERT INTO looki_tasks (id,task_key,journal_id,day,schedule_id,body,section,source_line,"
+                "done,done_day,reminded_at,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,?,?)",
+                (
+                    str(uuid.uuid4()), key, journal_id, day, schedule_id, body,
+                    str(task.get("section") or ""), str(task.get("source_line") or ""),
+                    done, day if done else None, sort_order, now, now,
+                ),
+            )
+        for row in self.db.execute("SELECT id,task_key,source_line FROM looki_tasks WHERE journal_id=?", (journal_id,)).fetchall():
+            if row["task_key"] not in keys:
+                # 旧版本可能遗留编号列表等非 checkbox 任务，解析规则收紧时不得误删其完成状态。
+                if not _TASK_BOX_RE.match(row["source_line"]):
+                    continue
+                # 源 Markdown 已删除该任务标记：物理删除任务与提醒记录
+                self.db.execute("DELETE FROM looki_tasks WHERE id=?", (row["id"],))
+                self.db.execute("DELETE FROM task_reminders WHERE task_id=?", (row["id"],))
+
+    def set_journal_match(self, journal_id: str, schedule_id: str | None) -> None:
+        now = datetime.now().astimezone().isoformat()
+        with self.db:
+            self.db.execute(
+                "UPDATE looki_journals SET schedule_id=?,match_state=?,updated_at=? WHERE id=?",
+                (schedule_id, "matched" if schedule_id else "unmatched", now, journal_id),
+            )
+            self.db.execute("UPDATE looki_tasks SET schedule_id=?,updated_at=? WHERE journal_id=?", (schedule_id, now, journal_id))
+
+    def journal_days(self, start_day: str, end_day: str) -> set[str]:
+        rows = self.db.execute("SELECT DISTINCT day FROM looki_journals WHERE day BETWEEN ? AND ?", (start_day, end_day)).fetchall()
+        return {r["day"] for r in rows}
+
+    def journals(
+        self,
+        start_day: str,
+        end_day: str,
+        only_unmatched: bool = False,
+        today: date | None = None,
+        expire_days: int = 3,
+        include_deleted_tasks: bool = False,
+    ) -> list[dict[str, Any]]:
+        """默认只返回已匹配日志；`only_unmatched=True` 仅供内部重匹配使用。
+
+        传入 `today` 时（模型上下文/检索方向），剔除已逾期未完成的任务及其原文行；
+        页面不传 `today`，仍可看到过期任务。
+        """
+        start = date.fromisoformat(start_day)
+        end = date.fromisoformat(end_day)
+        if end < start or (end - start).days > 366:
+            raise ValueError("日期范围无效或超过 366 天")
+        sql = "SELECT * FROM looki_journals WHERE day BETWEEN ? AND ?"
+        sql += " AND match_state='unmatched'" if only_unmatched else " AND match_state='matched'"
+        sql += " ORDER BY day, recorded_at, created_at"
+        rows = self.db.execute(sql, (start_day, end_day)).fetchall()
+        items = [self._journal_row(r) for r in rows]
+        if items:
+            by_id = {item["id"]: item for item in items}
+            placeholders = ",".join("?" for _ in by_id)
+            task_rows = self.db.execute(
+                f"SELECT id,journal_id,day,schedule_id,body,section,source_line,done,done_day,deleted,sort_order "
+                f"FROM looki_tasks WHERE journal_id IN ({placeholders})"
+                + ("" if include_deleted_tasks else " AND deleted=0")
+                + " ORDER BY sort_order, created_at, id",
+                tuple(by_id),
+            ).fetchall()
+            expired_lines: set[str] = set()
+            for task in task_rows:
+                journal = by_id.get(task["journal_id"])
+                if journal is None:
+                    continue
+                if today is not None and not task["done"] and is_task_expired(task["day"], today, expire_days):
+                    expired_lines.add(str(task["source_line"] or "").strip())
+                    continue
+                journal["tasks"].append({
+                    "id": task["id"], "journal_id": task["journal_id"], "day": task["day"],
+                    "schedule_id": task["schedule_id"], "body": task["body"], "section": task["section"],
+                    "done": bool(task["done"]), "done_day": task["done_day"],
+                    "deleted": bool(task["deleted"]),
+                })
+            if expired_lines:
+                expired_lines.discard("")
+                for journal in items:
+                    content = str(journal.get("content") or "")
+                    if content:
+                        journal["content"] = "\n".join(
+                            line for line in content.splitlines() if line.strip() not in expired_lines
+                        )
+        return items
+
+    @staticmethod
+    def _journal_row(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["media_count"] = int(item.get("media_count") or 0)
+        item["user_edited"] = bool(item.get("user_edited"))
+        item["tasks"] = []
+        return item
+
+    def tasks(
+        self,
+        start_day: str | None = None,
+        end_day: str | None = None,
+        only_pending: bool = False,
+        limit: int = 500,
+        include_deleted: bool = False,
+    ) -> list[dict[str, Any]]:
+        """页面任务查询：包含过期任务，但排除未匹配日志下的任务与软删除任务。"""
+        sql = (
+            "SELECT id,journal_id,day,schedule_id,body,section,done,done_day,reminded_at,"
+            "deleted,sort_order,user_edited FROM looki_tasks"
+        )
+        clauses: list[str] = [_MATCHED_TASK_SCOPE.format(alias="looki_tasks")]
+        params: list[Any] = []
+        if start_day and end_day:
+            date.fromisoformat(start_day)
+            date.fromisoformat(end_day)
+            clauses.append("day BETWEEN ? AND ?")
+            params.extend((start_day, end_day))
+        if only_pending:
+            clauses.append("done=0")
+        if not include_deleted:
+            clauses.append("deleted=0")
+        sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY deleted, done, sort_order, day DESC, created_at, id LIMIT ?"
+        params.append(max(1, min(int(limit), 2000)))
+        return [self._task_row(r) for r in self.db.execute(sql, tuple(params)).fetchall()]
+
+    def tasks_today_pending(self, day: str) -> list[dict[str, Any]]:
+        """左侧任务面板：只返回当天来源且未完成、未删除的任务。"""
+        date.fromisoformat(day)
         rows = self.db.execute(
-            "SELECT s.looki_id AS looki_id, m.media_type AS media_type, COUNT(*) AS c "
-            "FROM media_evidence m JOIN schedules s ON s.looki_id=m.looki_id "
-            "WHERE s.day BETWEEN ? AND ? AND s.deleted=0 GROUP BY s.looki_id, m.media_type",
-            (start_day, end_day),
+            "SELECT id,journal_id,day,schedule_id,body,section,done,done_day,reminded_at,"
+            "deleted,sort_order,user_edited FROM looki_tasks "
+            "WHERE day=? AND done=0 AND deleted=0 AND " + _MATCHED_TASK_SCOPE.format(alias="looki_tasks")
+            + " ORDER BY sort_order, created_at, id",
+            (day,),
         ).fetchall()
-        result: dict[str, dict[str, int]] = {}
-        for row in rows:
-            result.setdefault(row["looki_id"], {})[row["media_type"]] = row["c"]
-        return result
+        return [self._task_row(r) for r in rows]
+
+    def tasks_done_on(self, day: str) -> list[dict[str, Any]]:
+        date.fromisoformat(day)
+        rows = self.db.execute(
+            "SELECT id,journal_id,day,schedule_id,body,section,done,done_day,reminded_at,"
+            "deleted,sort_order,user_edited FROM looki_tasks "
+            "WHERE done=1 AND done_day=? AND deleted=0 AND " + _MATCHED_TASK_SCOPE.format(alias="looki_tasks")
+            + " ORDER BY updated_at DESC",
+            (day,),
+        ).fetchall()
+        return [self._task_row(r) for r in rows]
+
+    @staticmethod
+    def _task_row(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["done"] = bool(item["done"])
+        item["deleted"] = bool(item.get("deleted"))
+        item["user_edited"] = bool(item.get("user_edited"))
+        item.pop("sort_order", None)
+        return item
+
+    def set_task_done(self, task_id: str, done: bool, day: str) -> None:
+        now = datetime.now().astimezone().isoformat()
+        with self.db:
+            cur = self.db.execute(
+                "UPDATE looki_tasks SET done=?,done_day=?,updated_at=? WHERE id=?",
+                (1 if done else 0, date.fromisoformat(day).isoformat() if done else None, now, task_id),
+            )
+            if not cur.rowcount:
+                raise ValueError("任务不存在")
+
+    def update_task(self, task_id: str, body: str) -> None:
+        body = str(body or "").strip()
+        if not body or len(body) > 500:
+            raise ValueError("任务内容不能为空且不能超过 500 字")
+        with self.db:
+            cur = self.db.execute(
+                "UPDATE looki_tasks SET body=?,user_edited=1,updated_at=? WHERE id=?",
+                (body, datetime.now().astimezone().isoformat(), task_id),
+            )
+            if not cur.rowcount:
+                raise ValueError("任务不存在")
+
+    def delete_task(self, task_id: str) -> None:
+        with self.db:
+            cur = self.db.execute(
+                "UPDATE looki_tasks SET deleted=1,updated_at=? WHERE id=?",
+                (datetime.now().astimezone().isoformat(), task_id),
+            )
+            if not cur.rowcount:
+                raise ValueError("任务不存在")
+
+    def restore_task(self, task_id: str) -> None:
+        with self.db:
+            cur = self.db.execute(
+                "UPDATE looki_tasks SET deleted=0,updated_at=? WHERE id=?",
+                (datetime.now().astimezone().isoformat(), task_id),
+            )
+            if not cur.rowcount:
+                raise ValueError("任务不存在")
+
+    def move_task(self, task_id: str, direction: str) -> None:
+        """在同一天、同一状态分组（未完成/已完成/已删除）内上移或下移一格。"""
+        if direction not in ("up", "down"):
+            raise ValueError("方向无效")
+        row = self.db.execute("SELECT done,deleted,day FROM looki_tasks WHERE id=?", (task_id,)).fetchone()
+        if row is None:
+            raise ValueError("任务不存在")
+        rows = self.db.execute(
+            "SELECT id FROM looki_tasks WHERE done=? AND deleted=? AND day=? ORDER BY sort_order, created_at, id",
+            (row["done"], row["deleted"], row["day"]),
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+        index = ids.index(task_id)
+        target = index - 1 if direction == "up" else index + 1
+        if target < 0 or target >= len(ids):
+            return
+        ids[index], ids[target] = ids[target], ids[index]
+        with self.db:
+            for order, tid in enumerate(ids):
+                self.db.execute("UPDATE looki_tasks SET sort_order=? WHERE id=?", (order, tid))
+
+    def pending_task_reminders(
+        self,
+        limit: int = 50,
+        today: date | None = None,
+        expire_days: int = 3,
+    ) -> list[dict[str, Any]]:
+        clauses = ["done=0", "deleted=0", "reminded_at IS NULL", _MATCHED_TASK_SCOPE.format(alias="looki_tasks")]
+        params: list[Any] = []
+        if today is not None:
+            clauses.append("day >= ?")
+            params.append((today - timedelta(days=max(0, int(expire_days)))).isoformat())
+        params.append(max(1, min(int(limit), 200)))
+        rows = self.db.execute(
+            "SELECT id,journal_id,day,schedule_id,body,section,done,done_day,reminded_at FROM looki_tasks "
+            "WHERE " + " AND ".join(clauses) + " ORDER BY day, created_at LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [self._task_row(r) for r in rows]
+
+    def mark_tasks_reminded(self, task_ids: list[str]) -> None:
+        if not task_ids:
+            return
+        now = datetime.now().astimezone().isoformat()
+        placeholders = ",".join("?" for _ in task_ids)
+        with self.db:
+            self.db.execute(f"UPDATE looki_tasks SET reminded_at=?,updated_at=? WHERE id IN ({placeholders})", (now, now, *task_ids))
+
+    def pending_task_reminders_for(
+        self,
+        user: str,
+        limit: int = 50,
+        today: date | None = None,
+        expire_days: int = 3,
+    ) -> list[dict[str, Any]]:
+        """按接收人查询尚未提醒的任务：每个接收人各自维护提醒状态。"""
+        clauses = [
+            "t.done=0",
+            "t.deleted=0",
+            "NOT EXISTS (SELECT 1 FROM task_reminders r WHERE r.task_id=t.id AND r.user=?)",
+            _MATCHED_TASK_SCOPE.format(alias="t"),
+        ]
+        params: list[Any] = [user]
+        if today is not None:
+            clauses.append("t.day >= ?")
+            params.append((today - timedelta(days=max(0, int(expire_days)))).isoformat())
+        params.append(max(1, min(int(limit), 200)))
+        rows = self.db.execute(
+            "SELECT t.id,t.journal_id,t.day,t.schedule_id,t.body,t.section,t.done,t.done_day,t.reminded_at,"
+            "j.content AS journal_content FROM looki_tasks t LEFT JOIN looki_journals j ON j.id=t.journal_id WHERE "
+            + " AND ".join(clauses) + " ORDER BY t.day, t.created_at LIMIT ?",
+            tuple(params),
+        ).fetchall()
+        return [self._task_row(r) for r in rows]
+
+    def mark_tasks_reminded_for(self, task_ids: list[str], user: str, message: str = "") -> None:
+        if not task_ids:
+            return
+        now = datetime.now().astimezone().isoformat()
+        with self.db:
+            for task_id in task_ids:
+                self.db.execute(
+                    "INSERT OR REPLACE INTO task_reminders (task_id,user,reminded_at,message) VALUES (?,?,?,?)",
+                    (task_id, user, now, str(message)),
+                )
+
+    def latest_task_reminder_for(self, user: str) -> dict[str, Any] | None:
+        """返回该接收人最近一条仍有上下文的未完成任务提醒。"""
+        row = self.db.execute(
+            "SELECT t.id AS task_id,t.day,t.body,t.section,r.reminded_at,r.message,"
+            "j.content AS journal_content FROM task_reminders r "
+            "JOIN looki_tasks t ON t.id=r.task_id "
+            "JOIN looki_journals j ON j.id=t.journal_id "
+            "WHERE r.user=? AND r.message<>'' AND t.done=0 AND t.deleted=0 "
+            "ORDER BY r.reminded_at DESC LIMIT 1",
+            (str(user),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def last_task_reminder_at_for(self, user: str) -> str | None:
+        row = self.db.execute(
+            "SELECT MAX(reminded_at) FROM task_reminders WHERE user=?", (user,)
+        ).fetchone()
+        return str(row[0]) if row and row[0] else None
+
+    def delete_unreminded_task(self, task_id: str) -> bool:
+        """低价值任务可软删除，但不能误删已经提醒过其他接收人的任务。"""
+        cursor = self.db.execute(
+            "UPDATE looki_tasks SET deleted=1,updated_at=? "
+            "WHERE id=? AND deleted=0 AND NOT EXISTS "
+            "(SELECT 1 FROM task_reminders WHERE task_id=?)",
+            (datetime.now().astimezone().isoformat(), task_id, task_id),
+        )
+        self.db.commit()
+        return cursor.rowcount > 0
+
+    def complete_latest_reminded_task(self, user: str, done_day: str | None = None) -> dict[str, Any] | None:
+        row = self.db.execute(
+            "SELECT t.id FROM looki_tasks t JOIN task_reminders r ON r.task_id=t.id "
+            "WHERE r.user=? AND t.done=0 AND t.deleted=0 "
+            "ORDER BY r.reminded_at DESC,r.rowid DESC LIMIT 1",
+            (user,),
+        ).fetchone()
+        if row is None:
+            return None
+        self.set_task_done(row["id"], True, done_day or date.today().isoformat())
+        completed = self.db.execute("SELECT * FROM looki_tasks WHERE id=?", (row["id"],)).fetchone()
+        return self._task_row(completed) if completed else None
 
     def clues(self, days: int = 7, max_items: int = 3, timezone: str = "Asia/Shanghai") -> list[str]:
-        end = datetime.now(ZoneInfo(timezone)).date()
+        """生成近期生活线索：已结束的真实活动优先，再用剩余名额放校正、晚间与关键词统计。"""
+        zone = ZoneInfo(timezone)
+        now = datetime.now(zone)
+        end = now.date()
         start = end - timedelta(days=max(1, min(days, 31)) - 1)
-        rows = self.db.execute("SELECT day,title,keywords,end_at FROM schedules WHERE day BETWEEN ? AND ? AND deleted=0 ORDER BY day DESC,start_at DESC", (start.isoformat(), end.isoformat())).fetchall()
-        late_days = {r["day"] for r in rows if datetime.fromisoformat(r["end_at"]).hour >= 22}
         limit = max(0, min(max_items, 10))
-        result = []
-        correction_rows = self.db.execute("SELECT s.day,s.title,c.note FROM schedule_corrections c JOIN schedules s ON s.id=c.schedule_id WHERE s.day BETWEEN ? AND ? AND s.deleted=0 ORDER BY c.created_at DESC LIMIT ?", (start.isoformat(), end.isoformat(), limit)).fetchall()
-        result.extend(f"{r['day']}《{r['title']}》对话校正：{r['note']}" for r in correction_rows)
-        if len(late_days) >= 3:
+        if limit == 0:
+            return []
+        rows = self.db.execute(
+            "SELECT id,day,start_at,end_at,title,description,keywords,source FROM schedules "
+            "WHERE day BETWEEN ? AND ? AND deleted=0",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        correction_rows = self.db.execute(
+            "SELECT s.id AS schedule_id,s.day,s.title,c.note FROM schedule_corrections c "
+            "JOIN schedules s ON s.id=c.schedule_id WHERE s.day BETWEEN ? AND ? AND s.deleted=0 "
+            "ORDER BY c.created_at DESC",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        latest_correction: dict[str, str] = {}
+        for row in correction_rows:
+            latest_correction.setdefault(row["schedule_id"], row["note"])
+
+        # 只把已经结束的记录当作“发生过”，并按换算后的本地开始时间从近到远排序。
+        ended: list[tuple[datetime, datetime, sqlite3.Row]] = []
+        for row in rows:
+            try:
+                local_start = datetime.fromisoformat(row["start_at"]).astimezone(zone)
+                local_end = datetime.fromisoformat(row["end_at"]).astimezone(zone)
+            except ValueError:
+                continue
+            if local_end <= now:
+                ended.append((local_start, local_end, row))
+        ended.sort(key=lambda entry: entry[0], reverse=True)
+
+        result: list[str] = []
+        shown_corrections: set[str] = set()
+        for local_start, local_end, row in ended[:limit]:
+            source = "Looki 记录" if row["source"] == "looki" else "手工补录"
+            line = f"{local_start:%Y-%m-%d} {local_start:%H:%M}-{local_end:%H:%M}《{row['title']}》[{source}]"
+            excerpt = _clue_excerpt(row["description"])
+            if excerpt:
+                line += f"：{excerpt}"
+            note = latest_correction.get(row["id"])
+            if note:
+                line += f"（对话校正：{_clue_excerpt(note, 60)}）"
+                shown_corrections.add(row["id"])
+            result.append(line)
+        for row in correction_rows:
+            if len(result) >= limit:
+                break
+            if row["schedule_id"] in shown_corrections:
+                continue
+            if row["schedule_id"] not in {entry[2]["id"] for entry in ended}:
+                continue
+            result.append(f"{row['day']}《{row['title']}》对话校正：{row['note']}")
+        ended_rows = [entry[2] for entry in ended]
+        late_days = {row["day"] for row in ended_rows if datetime.fromisoformat(row["end_at"]).astimezone(zone).hour >= 22}
+        if len(result) < limit and len(late_days) >= 3:
             result.append(f"回看的日程中，有{len(late_days)}天记录到结束时间在22点或之后的活动；这只说明晚间仍有活动记录，不代表睡眠情况。")
         counts: dict[str, int] = {}
-        for row in rows:
+        for row in ended_rows:
             for word in json.loads(row["keywords"]):
                 counts[word] = counts.get(word, 0) + 1
-        result.extend(f"近期日程关键词多次出现：{word}（{count}次）。" for word, count in sorted(counts.items(), key=lambda x: (-x[1], x[0])) if count >= 2)
+        if len(result) < limit:
+            result.extend(f"近期日程关键词多次出现：{word}（{count}次）。" for word, count in sorted(counts.items(), key=lambda x: (-x[1], x[0])) if count >= 2)
         return result[:limit]

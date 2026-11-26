@@ -5,10 +5,10 @@
 <title>Looki 日程</title>
 <style>
 :root{
-  --bg:#f4f7f5;--surface:#fff;--line:#e2e9e5;--text:#222a26;--muted:#65716b;
-  --accent:#176b56;--accent-soft:#e9f2ee;--dot:#e0a908;
-  --clue-bg:#fdf7e7;--clue-line:#ecd9a4;--clue-text:#7d6218;
-  --r:12px;
+  --bg:#e7eae4;--surface:#f7f8f4;--card:#f7f8f4;--line:#c6ccc1;--text:#20251f;--muted:#687064;
+  --accent:#252b24;--accent-soft:#edf3df;--dot:#252b24;
+  --clue-bg:#f1f3e9;--clue-line:#c6ccc1;--clue-text:#4b5546;
+  --rhine:#d6f65a;--r:0;
   font:14px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
   color:var(--text);background:var(--bg);
 }
@@ -22,8 +22,9 @@ button,input,select,textarea{font:inherit;color:inherit}
 .topbar{
   position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;flex-wrap:wrap;
   padding:10px 20px;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);
-  border-bottom:1px solid var(--line);
+  border-bottom:1px solid var(--line);transition:transform .22s ease;
 }
+.topbar.hide{transform:translateY(-100%)}
 .brand{display:flex;align-items:center;gap:10px;min-width:0}
 .logo{width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:14px;flex:none}
 .brand h1{font-size:16px;white-space:nowrap}
@@ -32,7 +33,8 @@ button,input,select,textarea{font:inherit;color:inherit}
 .tabs{display:flex;gap:2px;padding:3px;background:#eef2f0;border-radius:10px}
 .tab{border:none;background:none;padding:6px 16px;border-radius:8px;font-size:13px;color:var(--muted);cursor:pointer}
 .tab.active{background:var(--surface);color:var(--text);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.07)}
-.acts{margin-left:auto;display:flex;gap:8px}
+.acts{margin-left:auto;display:flex;gap:8px;align-items:center}
+.panel-toggle{min-width:34px;padding:5px 9px;font-size:18px;font-weight:600;line-height:1}
 
 /* ---------- 通用控件 ---------- */
 button{cursor:pointer}
@@ -56,11 +58,34 @@ button{cursor:pointer}
 .meta.err{color:#b4451f}
 .hint{font-size:12px;color:var(--muted);margin-left:auto}
 
-/* ---------- 主布局：左时间轴 / 右月视图+当日详情 ---------- */
+/* ---------- 主布局：左任务面板 / 中时间轴 / 右月视图+当日详情 ---------- */
 .layout{
-  display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:16px;
+  display:grid;grid-template-columns:268px minmax(0,1fr) 350px;gap:16px;
   align-items:start;padding:16px 20px 28px;max-width:1500px;margin:0 auto;
 }
+.task-panel{
+  display:flex;flex-direction:column;gap:12px;position:sticky;top:66px;
+  max-height:calc(100vh - 82px);padding:14px;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:0 1px 2px rgba(20,40,32,.04);
+}
+.task-panel-head{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.task-panel-head h2{font-size:15px}
+.task-panel-head .icon{margin-left:auto}
+.task-panel-body{flex:1;min-height:0;overflow-y:auto;padding-right:2px}
+.task-panel-sub{margin:12px 0 2px;font-size:12px;font-weight:600;color:var(--muted)}
+.task-panel-sub:first-child{margin-top:0}
+.task-panel .task-page-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 8px;align-items:start;padding:8px 0}
+.task-panel .task-page-row input{margin-top:3px}
+.task-panel .task-page-main{grid-column:2;min-width:0}
+.task-panel .task-page-body{font-size:12.5px}
+.task-panel .task-page-date{grid-column:2;justify-self:start;padding:0;font-size:11px;color:var(--muted)}
+.task-panel-foot{flex-shrink:0}
+.task-panel-foot .icon{width:100%}
+.task-panel-backdrop{display:none}
+.layout.task-hidden{grid-template-columns:minmax(0,1fr) 350px}
+.layout.task-hidden .task-panel{display:none}
+.layout.task-hidden.side-hidden{grid-template-columns:minmax(0,1fr)}
 .side{display:flex;flex-direction:column;gap:16px;position:sticky;top:66px;max-height:calc(100vh - 82px)}
 .side-body{display:flex;flex-direction:column;gap:16px;flex:1;min-height:0;overflow-y:auto;padding-right:2px}
 .side-head{display:none;align-items:center;gap:8px;flex-shrink:0}
@@ -70,22 +95,49 @@ button{cursor:pointer}
   padding:12px 14px;font-size:12px;color:var(--muted);text-align:center;
 }
 .side-backdrop{display:none}
-.layout.side-hidden{grid-template-columns:minmax(0,1fr)}
+.layout.side-hidden{grid-template-columns:268px minmax(0,1fr)}
 .layout.side-hidden .side{display:none}
-body.side-lock{overflow:hidden}
+body.side-lock,body.task-lock{overflow:hidden}
 
 /* 侧栏内数据居中 */
 .side .cal-head,.side .card-head{flex-direction:column;align-items:center;gap:6px;text-align:center}
 .side .cal-head .head-acts,.side .card-head .head-acts,.side .card-head .hint{margin-left:0}
 .side .legend{justify-content:center;text-align:center;flex-wrap:wrap}
+.side .placeholder{text-align:center}
 .side .out-row{display:flex;justify-content:center;align-items:baseline;gap:8px;text-align:center}
 .side .out-row .out-time{flex:none}
 .side .out-title{text-align:center}
-.side .placeholder{text-align:center}
+
+/* ---------- 当天时间轴目录 ---------- */
+.outline{display:grid;gap:1px;max-height:46vh;overflow:auto}
+.out-row{
+  display:grid;grid-template-columns:44px 1fr;gap:10px;align-items:baseline;
+  border:none;background:none;padding:7px 8px;border-radius:8px;text-align:left;
+}
+.out-row:hover{background:#f1f6f3}
+.out-row.cur{background:var(--accent-soft)}
+.out-time{font-size:12px;color:var(--accent);font-weight:600;font-variant-numeric:tabular-nums}
+.out-title{
+  font-size:13px;line-height:1.45;color:var(--text);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.out-row.cur .out-title{font-weight:600;color:var(--accent)}
+.placeholder{font-size:12.5px;color:var(--muted);line-height:1.75;margin:0}
 
 @media(max-width:960px){
   .layout{grid-template-columns:1fr}
+  .layout.task-hidden,.layout.side-hidden,.layout.task-hidden.side-hidden{grid-template-columns:1fr}
   .status{max-width:34vw}
+  .task-panel{
+    position:fixed;top:0;left:0;bottom:0;z-index:40;max-height:none;
+    width:min(86vw,320px);background:var(--bg);border:none;border-right:1px solid var(--line);
+    border-radius:0;box-shadow:14px 0 34px rgba(20,40,32,.16);
+    padding:calc(12px + env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom));
+    transform:translateX(-100%);transition:transform .25s ease;
+  }
+  .task-panel.open{transform:translateX(0)}
+  .layout.task-hidden .task-panel{display:flex}
+  .task-panel-backdrop.show{display:block;position:fixed;inset:0;z-index:39;background:rgba(18,30,24,.34)}
   .side{
     position:fixed;top:0;right:0;bottom:0;z-index:40;max-height:none;
     width:min(86vw,360px);gap:12px;background:var(--bg);
@@ -98,6 +150,7 @@ body.side-lock{overflow:hidden}
   .side-head .icon{margin-left:auto}
   .layout.side-hidden .side{display:flex}
   .side-backdrop.show{display:block;position:fixed;inset:0;z-index:39;background:rgba(18,30,24,.34)}
+  #taskToggle,#sideToggle{display:none}
 }
 
 /* ---------- 时间轴 ---------- */
@@ -121,7 +174,7 @@ body.side-lock{overflow:hidden}
 .chips i{font-style:normal;font-size:11.5px;background:var(--accent-soft);color:#2c5c4d;border-radius:999px;padding:1px 9px}
 .tl-tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);margin-top:9px}
 .tl-tag::before{content:"";width:4px;height:4px;border-radius:50%;background:#a9b6b0}
-.tl-desc{margin:4px 0 0;font-size:13px;color:#4a554f;line-height:1.75;white-space:pre-wrap}
+.tl-desc{margin:4px 0 0;font-size:13px;color:#4a554f;line-height:1.75}
 .tl-tag+.chips{margin-top:6px}
 .tl-audio{border-left:3px solid var(--clue-line);background:var(--clue-bg);border-radius:0 8px 8px 0;padding:8px 11px;margin-top:10px}
 .tl-audio-tag{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--clue-text);margin-bottom:4px}
@@ -132,6 +185,64 @@ body.side-lock{overflow:hidden}
 .tl-correction+.tl-correction{border-top:1px solid #d5e5dd;margin-top:7px;padding-top:7px}
 .tl-correction p{margin:0;font-size:12.5px;line-height:1.75;color:#315c4d;white-space:pre-wrap}
 .tl-correction time{display:block;margin-top:3px;font-size:11px;color:var(--muted)}
+
+/* ---------- Looki AI 日志与任务 ---------- */
+.tl-journal{margin-top:10px;padding:9px 11px;border:1px solid #d7e1ec;border-left:3px solid #7ba0c9;border-radius:0 8px 8px 0;background:#f5f9fd}
+.tl-journal-tag{font-size:11px;font-weight:600;color:#35597f;margin-bottom:4px}
+.tl-journal-time{display:block;font-size:11px;color:#6b7f93;margin-bottom:4px;font-variant-numeric:tabular-nums}
+.tl-journal-content{margin:0;font-size:12.5px;line-height:1.8;color:#2f4257}
+.tl-audio .md-body{margin:0;font-size:12.5px;line-height:1.75;color:#5d4c12}
+
+/* ---------- Markdown 正文 ---------- */
+.md-body{overflow-wrap:anywhere}
+.md-body .md-section{margin:0 0 10px;padding-left:10px;border-left:2px solid rgba(120,140,130,.28)}
+.md-body .md-section:last-child{margin-bottom:0}
+.md-body .md-section-plain{padding-left:0;border-left:0}
+.md-body h1,.md-body h2,.md-body h3,.md-body h4,.md-body h5,.md-body h6{margin:0 0 6px;font-weight:600;line-height:1.5;color:#22313f}
+.md-body h1{font-size:15px}
+.md-body h2{font-size:14px}
+.md-body h3,.md-body h4,.md-body h5,.md-body h6{font-size:13px}
+.md-body p{margin:0 0 8px}
+.md-body p:last-child{margin-bottom:0}
+.md-body ul,.md-body ol{margin:0 0 8px;padding-left:20px}
+.md-body li{margin:2px 0}
+.md-body blockquote{margin:0 0 8px;padding:6px 10px;border-left:3px solid #d8c48d;background:rgba(253,247,231,.75);border-radius:0 8px 8px 0;color:#6b5716}
+.md-body code{background:rgba(23,107,86,.08);border-radius:4px;padding:1px 4px;font-size:11.5px}
+.md-body pre{margin:0 0 8px;background:rgba(23,107,86,.07);border-radius:8px;padding:8px 10px;overflow-x:auto}
+.md-body pre code{padding:0;background:none}
+.md-body a{color:var(--accent);text-decoration:underline}
+.md-body hr{border:0;border-top:1px solid var(--line);margin:10px 0}
+.task-list{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:4px}
+.task-row{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:var(--text)}
+.task-row input{flex:none;width:auto;margin:2px 0 0;accent-color:var(--accent);cursor:pointer}
+.task-row.done .task-body{color:var(--muted);text-decoration:line-through}
+.task-row.deleted .task-body{color:#a3aba5;text-decoration:line-through}
+.task-row.deleted input{cursor:default}
+.task-body{line-height:1.6}
+.day-task{display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:1px solid #f0f4f2}
+.day-task:last-child{border-bottom:none}
+.day-task input{flex:none;width:auto;margin:3px 0 0;accent-color:var(--accent);cursor:pointer}
+.day-task-body{flex:1;min-width:0;border:none;background:none;padding:0;text-align:left;font-size:12.5px;line-height:1.6;color:var(--text)}
+.day-task-body:hover{color:var(--accent);text-decoration:underline}
+.day-task.done .day-task-body{color:var(--muted);text-decoration:line-through}
+.task-page-row{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line)}
+.task-page-row:last-child{border-bottom:none}
+.task-page-row input{flex:none;width:auto;margin:3px 0 0;accent-color:var(--accent);cursor:pointer}
+.task-page-main{flex:1;min-width:0}
+.task-page-body{border:none;background:none;padding:0;text-align:left;font-size:13px;line-height:1.6;color:var(--text)}
+.task-page-body:hover{color:var(--accent);text-decoration:underline}
+.task-page-date{flex:none;border:none;background:none;padding:0 0 0 6px;font-size:11.5px;color:var(--accent);font-variant-numeric:tabular-nums}
+.task-page-date:hover{text-decoration:underline}
+.task-page-row.done .task-page-body{color:var(--muted);text-decoration:line-through}
+.task-page-row.deleted .task-page-body,.task-page-row.deleted .task-page-date{color:#a3aba5;text-decoration:line-through}
+.task-page-meta{display:flex;gap:6px;align-items:center;margin-top:2px}
+.task-page-ops,.task-ops{flex:none;display:flex;gap:2px;align-items:center;margin-left:auto}
+.task-ops .ghost{padding:0 4px;font-size:12px;line-height:1.4}
+.tl-journal-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.tl-journal-head .ghost{margin-left:auto}
+.tl-correction-ops{display:flex;gap:2px;justify-content:flex-end;margin-top:3px}
+.task-empty{font-size:12.5px;color:var(--muted);padding:10px 0}
+.flash{box-shadow:0 0 0 3px var(--accent-soft)!important;border-color:var(--accent)!important}
 .empty{color:var(--muted);text-align:center;padding:36px 0;font-size:13px}
 .recording{display:flex;gap:8px;align-items:center;justify-content:center;padding:10px;font-size:13px;color:var(--clue-text);background:var(--clue-bg);border:1px dashed var(--clue-line);border-radius:10px}
 .recording .pulse{width:7px;height:7px;border-radius:50%;background:var(--dot);animation:pulse 1.2s infinite}
@@ -156,27 +267,11 @@ body.side-lock{overflow:hidden}
 .legend{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11.5px;color:var(--muted)}
 .legend i{width:5px;height:5px;border-radius:50%;background:var(--dot)}
 
-/* ---------- 视图工具与媒体 ---------- */
-.tl-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
+/* ---------- 视图工具 ---------- */
 .seg{display:flex;gap:2px;padding:2px;background:#eef2f0;border-radius:8px}
 .seg button{border:none;background:none;padding:4px 11px;border-radius:6px;font-size:12px;color:var(--muted)}
 .seg button.on{background:var(--surface);color:var(--text);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.07)}
-.inline-check{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer}
-.inline-check input{width:auto;margin:0}
-.range-hint{font-size:11.5px;color:var(--muted);margin-left:auto}
-.media-badges{display:inline-flex;gap:4px;flex-wrap:wrap}
-.media-badge{font-size:10.5px;font-weight:500;padding:0 6px;border-radius:999px;border:1px solid var(--line);color:var(--muted);background:#f7faf8}
-.media-badge.photo{background:#eaf3fb;border-color:#cfe2f2;color:#2f5f86}
-.media-badge.video{background:#f3eefb;border-color:#ded2f0;color:#5a4680}
-.media-badge.audio{background:var(--clue-bg);border-color:var(--clue-line);color:var(--clue-text)}
-.media-badge.transcript,.media-badge.summary{background:#eef4f1;border-color:#d5e5dd;color:#2e5f50}
-.media-badge.unknown{background:#f4f5f4}
 .tl-untitled{color:var(--muted);font-style:italic;font-weight:500}
-.tl-evidence{margin-top:10px;padding:8px 11px;border:1px dashed #cbd6d1;border-radius:8px;background:#fafcfb;display:grid;gap:6px}
-.ev-row{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline;font-size:12px;color:var(--muted)}
-.ev-meta{font-size:11.5px}
-.ev-excerpt{margin:0;font-size:12.5px;line-height:1.7;color:#4a554f;white-space:pre-wrap}
-.ev-infer{display:inline-block;margin-right:6px;font-size:10.5px;color:var(--clue-text);background:var(--clue-bg);border:1px dashed var(--clue-line);border-radius:999px;padding:0 6px}
 .agg-row{display:grid;grid-template-columns:104px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);text-align:left}
 .agg-row:hover{border-color:#c3d6cd;background:#fbfdfc}
 .agg-date{font-size:12.5px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -184,40 +279,130 @@ body.side-lock{overflow:hidden}
 .agg-meta{font-size:11.5px;color:var(--muted);white-space:nowrap}
 @media(max-width:600px){
   .tl-item{grid-template-columns:52px minmax(0,1fr);gap:10px}
-  .tl-tools{gap:6px}
   .agg-row{grid-template-columns:92px minmax(0,1fr)}
   .agg-meta{display:none}
 }
 
-/* ---------- 当天时间轴目录 ---------- */
-.outline{display:grid;gap:1px;max-height:46vh;overflow:auto}
-.out-row{
-  display:grid;grid-template-columns:44px 1fr;gap:10px;align-items:baseline;
-  border:none;background:none;padding:7px 8px;border-radius:8px;text-align:left;
+/* ---------- 任务聚合 / 设置页：莱茵折叠工作台 ---------- */
+.settings{
+  max-width:1080px;margin:20px auto;padding:22px 24px;
+  display:grid;grid-template-columns:196px minmax(0,1fr);gap:26px;
 }
-.out-row:hover{background:#f1f6f3}
-.out-row.cur{background:var(--accent-soft)}
-.out-time{font-size:12px;color:var(--accent);font-weight:600;font-variant-numeric:tabular-nums}
-.out-title{
-  font-size:13px;line-height:1.45;color:var(--text);
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+#viewSettings{
+  --rhine-bg:#e7eae4;--rhine-surface:#f7f8f4;--rhine-text:#20251f;
+  --rhine-muted:#687064;--rhine-line:#c6ccc1;--rhine-dark:#252b24;--rhine:#d6f65a;
+  position:relative;width:min(1180px,calc(100% - 40px));max-width:1180px;margin:24px auto 42px;padding:0;
+  border:1px solid var(--rhine-dark);border-radius:0;background:var(--rhine-bg);box-shadow:none;color:var(--rhine-text);
 }
-.out-row.cur .out-title{font-weight:600;color:var(--accent)}
-.placeholder{font-size:12.5px;color:var(--muted);line-height:1.75;margin:0}
-
-/* ---------- 设置页 ---------- */
-.settings{max-width:860px;margin:20px auto;padding:24px}
-.settings h2{font-size:17px}
-.settings h3{grid-column:1/-1;margin-top:10px;padding-top:16px;border-top:1px solid var(--line);font-size:14px}
-.settings .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px;margin-top:16px}
-.settings .grid2 label{display:grid;gap:5px;font-size:12.5px;color:var(--muted)}
-.settings .grid2 label input{width:100%}
-.settings .grid2 label.full{grid-column:1/-1}
-.settings .checks{display:grid;gap:9px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
-.check{display:flex;gap:9px;align-items:flex-start;font-size:13px;color:var(--text);cursor:pointer}
-.check input{width:auto;margin-top:3px}
-.check small{display:block;color:var(--muted);font-size:11.5px;line-height:1.6}
-.settings .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
+#viewSettings:after{content:"";position:absolute;right:-1px;top:-1px;width:18px;height:18px;background:linear-gradient(45deg,transparent 47%,var(--rhine-dark) 48% 53%,var(--bg) 54%);pointer-events:none}
+#viewSettings .config-page-intro{display:flex;justify-content:space-between;gap:24px;padding:26px 28px 24px;background:var(--rhine-surface);border-bottom:1px solid var(--rhine-dark)}
+#viewSettings .config-title-block{min-width:0}
+#viewSettings .config-kicker{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font:11px/1.2 Consolas,monospace;letter-spacing:.1em;color:var(--rhine-muted)}
+#viewSettings .config-kicker strong{padding:7px 10px;background:var(--rhine-dark);color:var(--rhine);font-size:12px;letter-spacing:.16em;clip-path:polygon(0 0,78% 0,100% 28%,100% 100%,0 100%)}
+#viewSettings .config-page-intro h2{display:flex;align-items:center;gap:10px;margin-top:18px;font-size:25px;letter-spacing:.08em}
+#viewSettings .config-page-intro h2:before{content:"";width:7px;height:22px;background:var(--rhine);border:1px solid var(--rhine-dark)}
+#viewSettings .config-page-intro .meta{margin:8px 0 0;color:var(--rhine-muted)}
+#viewSettings #cfgNotice.err{color:#b4451f}
+#viewSettings .config-actions{display:flex;align-items:flex-start;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+#viewSettings .config-revision{align-self:center;margin-right:6px;font:10px/1.2 Consolas,monospace;letter-spacing:.1em;color:var(--rhine-muted)}
+#viewSettings .primary,#viewSettings .icon{min-height:34px;border-radius:0;box-shadow:none}
+#viewSettings .primary{background:var(--rhine-dark);border-color:var(--rhine-dark);color:var(--rhine);clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,0 100%)}
+#viewSettings .primary:hover{background:#394137}
+#viewSettings .icon{background:transparent;border-color:var(--rhine-line);color:var(--rhine-text)}
+#viewSettings .icon:hover{background:var(--rhine);border-color:var(--rhine-dark);color:var(--rhine-text)}
+#viewSettings button:focus-visible,#viewSettings a:focus-visible{outline:2px solid var(--rhine);outline-offset:2px}
+#viewSettings .config-section-nav{position:sticky;top:65px;z-index:12;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:#eef1e9;border-bottom:1px solid var(--rhine-dark)}
+#viewSettings .config-section-nav a{display:flex;align-items:center;gap:9px;min-width:0;padding:12px 15px;border-right:1px solid var(--rhine-line);color:var(--rhine-muted);text-decoration:none;font-size:12.5px;white-space:nowrap}
+#viewSettings .config-section-nav a:last-child{border-right:0}
+#viewSettings .config-section-nav a i{font:10px/1 Consolas,monospace;color:#899482}
+#viewSettings .config-section-nav a:hover{background:#e2e7d9;color:var(--rhine-text)}
+#viewSettings .config-section-nav a.on{background:var(--rhine-dark);color:var(--rhine);font-weight:600}
+#viewSettings .config-section-nav a.on i{color:var(--rhine)}
+#viewSettings .config-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;padding:20px}
+#viewSettings .config-fold-panel{grid-column:1/-1;min-width:0;border:1px solid var(--rhine-dark);border-radius:0;background:var(--rhine-bg)}
+#viewSettings .config-fold-panel>summary{display:flex;align-items:center;gap:16px;padding:17px 20px;cursor:pointer;list-style:none;background:#f1f3ec}
+#viewSettings .config-fold-panel[open]>summary{border-bottom:1px solid var(--rhine-dark)}
+#viewSettings summary::-webkit-details-marker{display:none}
+#viewSettings .fold-heading{display:flex;align-items:center;gap:12px;min-width:0}
+#viewSettings .fold-heading>i{display:grid;place-items:center;width:34px;height:34px;flex:none;background:var(--rhine-dark);color:var(--rhine);font:11px/1 Consolas,monospace;clip-path:polygon(0 0,75% 0,100% 25%,100% 100%,0 100%)}
+#viewSettings .fold-heading>span{display:grid;gap:3px;min-width:0}
+#viewSettings .fold-heading strong{font-size:15px;letter-spacing:.06em}
+#viewSettings .fold-heading small{font:9px/1.3 Consolas,monospace;letter-spacing:.09em;color:var(--rhine-muted)}
+#viewSettings .fold-state{display:flex;align-items:center;gap:9px;margin-left:auto;font-size:11px;color:var(--rhine-muted);white-space:nowrap}
+#viewSettings .fold-state b,#viewSettings .config-subfold summary b{font:400 19px/1 Consolas,monospace;color:var(--rhine-dark);transition:transform .18s ease}
+#viewSettings .fold-open-label{display:none}
+#viewSettings .config-fold-panel[open] .fold-closed-label{display:none}
+#viewSettings .config-fold-panel[open] .fold-open-label{display:inline}
+#viewSettings .config-fold-panel[open]>summary .fold-state b,#viewSettings .config-subfold[open]>summary b{transform:rotate(45deg)}
+#viewSettings .config-fold-body{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px;padding:18px}
+#viewSettings .config-common-section-head{grid-column:1/-1;display:flex;justify-content:space-between;gap:12px;padding-bottom:9px;border-bottom:1px solid var(--rhine-line);font:10px/1.3 Consolas,monospace;letter-spacing:.08em;color:var(--rhine-muted)}
+#viewSettings .config-card{position:relative;grid-column:span 6;min-width:0;padding:18px;border:1px solid var(--rhine-line);border-radius:0;background:var(--rhine-surface);scroll-margin-top:140px}
+#viewSettings .config-card.wide{grid-column:1/-1}
+#viewSettings .config-card:after{content:"";position:absolute;right:-1px;top:-1px;width:12px;height:12px;background:linear-gradient(45deg,transparent 47%,var(--rhine-line) 48% 53%,var(--rhine-bg) 54%);pointer-events:none}
+#viewSettings .config-card-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:start;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #d9ded4}
+#viewSettings .config-card-head h3{display:flex;align-items:center;gap:8px;font-size:14px;letter-spacing:.04em}
+#viewSettings .config-card-head h3:before{content:"";width:5px;height:12px;background:var(--rhine);border:1px solid var(--rhine-dark)}
+#viewSettings .config-card-head .meta{grid-column:1;margin:0;color:var(--rhine-muted);font-size:12px}
+#viewSettings .config-code{grid-column:2;grid-row:1/span 2;font:10px/1.3 Consolas,monospace;letter-spacing:.08em;color:var(--rhine-muted)}
+#viewSettings .config-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px}
+#viewSettings .config-form-grid label{display:grid;gap:6px;min-width:0;font-size:12.5px;color:var(--rhine-muted)}
+#viewSettings .config-form-grid label.full{grid-column:1/-1}
+#viewSettings .config-form-grid small{display:block;font-size:11.5px;line-height:1.6;color:var(--rhine-muted)}
+#viewSettings input[type=text],#viewSettings input[type=password],#viewSettings input[type=number],#viewSettings select,#viewSettings textarea{min-width:0;min-height:36px;padding:8px 10px;border:1px solid var(--rhine-line);border-radius:0;background:#fcfdf9;color:var(--rhine-text)}
+#viewSettings textarea{resize:vertical}
+#viewSettings input:focus,#viewSettings select:focus,#viewSettings textarea:focus{outline:2px solid var(--rhine);outline-offset:0;border-color:var(--rhine-dark)}
+#viewSettings .keyrow{min-width:0}
+#viewSettings .keyrow .icon{flex:none}
+#viewSettings .toggle-list{display:grid;margin-top:16px;border-top:1px solid var(--rhine-line)}
+#viewSettings .toggle-row{display:grid;grid-template-columns:17px minmax(0,1fr);gap:10px;align-items:start;padding:12px 0;border-bottom:1px solid #dce1d6;cursor:pointer}
+#viewSettings .toggle-list .toggle-row:last-child{padding-bottom:0;border-bottom:0}
+#viewSettings .toggle-row input{appearance:none;display:grid;place-items:center;width:16px;height:16px;margin:2px 0 0;border:1px solid var(--rhine-dark);border-radius:0;background:transparent}
+#viewSettings .toggle-row input:after{content:"";width:8px;height:8px;background:var(--rhine);transform:scale(0)}
+#viewSettings .toggle-row input:checked{background:var(--rhine-dark)}
+#viewSettings .toggle-row input:checked:after{transform:scale(1)}
+#viewSettings .toggle-row>span{font-size:12.5px;font-weight:600;color:var(--rhine-text)}
+#viewSettings .toggle-row small{display:block;margin-top:3px;font-size:11.5px;font-weight:400;line-height:1.6;color:var(--rhine-muted)}
+#viewSettings .config-subfold{margin-top:14px;border:1px solid var(--rhine-line);background:#eef1e9}
+#viewSettings .config-subfold>summary{display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;list-style:none;font-size:12.5px;font-weight:600}
+#viewSettings .config-subfold>summary small{margin-left:auto;font:9px/1.3 Consolas,monospace;letter-spacing:.07em;color:var(--rhine-muted)}
+#viewSettings .config-subfold[open]>summary{border-bottom:1px solid var(--rhine-line)}
+#viewSettings .config-subfold>.config-form-grid{padding:14px;background:var(--rhine-surface)}
+#viewSettings .privacy-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.8fr);gap:20px;align-items:center}
+#viewSettings .privacy-card .config-card-head{margin:0;padding:0;border:0}
+#viewSettings .privacy-card>.toggle-row{padding:0;border:0}
+@media(max-width:860px){
+  .settings{grid-template-columns:minmax(0,1fr);padding:16px;gap:14px}
+  #viewSettings{width:calc(100% - 24px);margin:12px auto 30px}
+  #viewSettings .config-page-intro{padding:20px}
+  #viewSettings .config-section-nav{display:flex;overflow-x:auto;scrollbar-width:thin}
+  #viewSettings .config-section-nav a{flex:none}
+  #viewSettings .config-grid{gap:12px;padding:12px}
+  #viewSettings .config-fold-body{grid-template-columns:minmax(0,1fr);padding:12px}
+  #viewSettings .config-card,#viewSettings .config-card.wide{grid-column:1;scroll-margin-top:172px}
+  #viewSettings .config-form-grid{grid-template-columns:minmax(0,1fr)}
+  #viewSettings .config-form-grid label.full{grid-column:1}
+  #viewSettings .privacy-card{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:600px){
+  #viewSettings .config-page-intro{flex-direction:column;gap:18px;padding:18px 16px}
+  #viewSettings .config-page-intro h2{font-size:22px}
+  #viewSettings .config-actions{justify-content:flex-start;width:100%}
+  #viewSettings .config-revision{width:100%;margin:0 0 2px}
+  #viewSettings .config-actions button{flex:1}
+  #viewSettings .config-section-nav a{padding:11px 13px}
+  #viewSettings .config-grid{padding:9px;gap:10px}
+  #viewSettings .config-fold-panel>summary{padding:14px;gap:8px}
+  #viewSettings .fold-heading{gap:9px}
+  #viewSettings .fold-heading small{font-size:8px;letter-spacing:.04em}
+  #viewSettings .fold-state>span{display:none!important}
+  #viewSettings .config-fold-body{padding:9px;gap:10px}
+  #viewSettings .config-common-section-head{font-size:9px}
+  #viewSettings .config-card{padding:14px}
+  #viewSettings .config-subfold>summary small{display:none}
+}
+@media(prefers-reduced-motion:reduce){
+  #viewSettings *,#viewSettings *:before,#viewSettings *:after{transition:none!important}
+}
 input[type=text],input[type=password],input[type=number],input[type=date],input[type=datetime-local],select,textarea{
   padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);width:100%;
 }
@@ -236,17 +421,79 @@ dialog menu{display:flex;gap:8px;justify-content:flex-end;padding:0;margin:6px 0
 dialog menu button{border:1px solid var(--line);background:var(--surface);padding:7px 14px;border-radius:8px;font-size:13px}
 dialog menu button.primary{border-color:var(--accent)}
 dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
+
+/* 边缘折叠按钮：手机端始终贴左右边显示 */
+.edge{display:none;position:fixed;top:50%;transform:translateY(-50%);z-index:41;width:26px;height:58px;padding:0;place-items:center;border:1px solid var(--line);background:var(--surface);color:var(--accent);font:600 16px/1 Consolas,monospace;box-shadow:0 4px 14px rgba(20,40,32,.12)}
+.edge:hover{background:var(--accent-soft)}
+.edge-left{left:0;border-left:0;border-radius:0 8px 8px 0}
+.edge-right{right:0;border-right:0;border-radius:8px 0 0 8px}
+@media(max-width:960px){.edge{display:grid;width:30px;height:64px;font-size:18px}}
+
+/* ---------- 正式页莱茵生命 A 版主题：沿用 prototype/index.html ---------- */
+.topbar{background:#1e231e;border-bottom-color:#1e231e}
+.logo{border-radius:0;background:var(--rhine);color:#1e231e;font-size:11px;font-weight:700;letter-spacing:.06em}
+.brand-copy{display:grid;gap:2px}
+.brand-copy strong{font-size:12px;letter-spacing:.16em;line-height:1;color:#fff}
+.brand-copy h1{font-size:12px;font-weight:400;color:#98a292;letter-spacing:.04em}
+.tabs{background:#2c332b;border-radius:0}
+.tab{border-radius:0;color:#8f9a89}
+.tab.active{background:var(--rhine);color:#1e231e;box-shadow:none}
+.status,.pill{color:#98a292}
+.primary,.icon,.ghost{border-radius:0}
+.topbar .icon{background:#2c332b;border-color:#424b40;color:#c3ccbd}
+.topbar .icon:hover{background:#394136;color:var(--rhine)}
+.acts .primary{background:var(--rhine);border-color:var(--rhine);color:#1e231e}
+.acts .primary:hover{filter:brightness(.94);color:#1e231e}
+.primary:hover{background:#3a4336;color:var(--rhine)}
+.ghost:hover{background:var(--accent-soft);color:var(--accent)}
+.card{border-radius:0;box-shadow:none}
+.card::after{content:"";position:absolute;right:0;bottom:0;width:18px;height:3px;background:var(--rhine);pointer-events:none}
+.card-head{padding-bottom:10px;border-bottom:1px solid var(--line)}
+.task-row,.task-page-row{border-radius:0}
+.task-row:hover,.task-page-row:hover{background:var(--accent-soft)}
+.task-row input[type=checkbox],.task-page-row input[type=checkbox]{accent-color:var(--accent)}
+.task-row.done .task-body,.task-page-row.done .task-body{color:var(--muted)}
+.task-src{border-radius:0}
+.tl-item{border-radius:0;background:var(--card);transition:border-color .15s}
+.tl-item.sel{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.tl-item:hover{border-color:var(--accent)}
+.tl-time{color:var(--accent);font-weight:600}
+.tl-journal{border:0;border-left:3px solid var(--accent);border-radius:0;background:var(--accent-soft)}
+.tl-journal .tl-journal-tag{display:inline-block;padding:1px 5px;background:var(--accent);color:#fff;font-size:10px;letter-spacing:.06em}
+.tl-journal .tl-journal-time{color:var(--muted);font-size:11px}
+.tl-journal .tl-journal-content{color:var(--muted)}
+.cell{border-radius:0}
+.cell:hover,.cell.sel{background:var(--accent-soft)}
+.cell.sel{border-color:var(--accent)}
+.cell.today .num{background:var(--accent);border-radius:0;color:var(--rhine)}
+.dots i{border-radius:0}
+.legend i{border-radius:0}
+.chips i{border-radius:0;background:var(--accent-soft);color:var(--accent)}
+.out-row{border-radius:0}
+.out-row:hover,.out-row.cur{background:var(--accent-soft)}
+.out-row.cur .out-title{color:var(--accent)}
+input,select,textarea{border-radius:0}
 </style>
 </head>
 <body>
 
 <header class="topbar">
-  <div class="brand"><span class="logo">◔</span><h1>Looki 日程</h1><span class="status" id="status">正在读取同步状态…</span></div>
-  <nav class="tabs"><button class="tab active" id="tabPlan">日程</button><button class="tab" id="tabSettings">设置</button></nav>
-  <div class="acts"><button class="icon" id="sideToggle" aria-controls="sidePanel" aria-expanded="true" title="日历与目录">▤</button><button class="primary" id="sync">立即同步</button></div>
+  <button class="icon panel-toggle" id="taskToggle" aria-controls="taskPanel" aria-expanded="true" title="收起左侧任务面板" aria-label="收起左侧任务面板">&lt;</button>
+  <div class="brand"><span class="logo">RL</span><div class="brand-copy"><strong>RHINE LAB</strong><h1>Looki 日程</h1></div><span class="status" id="status">正在读取同步状态…</span></div>
+  <nav class="tabs"><button class="tab active" id="tabPlan">日程</button><button class="tab" id="tabTasks">任务</button><button class="tab" id="tabSettings">设置</button></nav>
+  <div class="acts"><button class="primary" id="sync">立即同步</button><button class="icon panel-toggle" id="sideToggle" aria-controls="sidePanel" aria-expanded="true" title="收起右侧日历" aria-label="收起右侧日历">&gt;</button></div>
 </header>
 
 <main class="layout" id="viewPlan">
+  <aside class="task-panel" id="taskPanel" aria-label="任务面板">
+    <div class="task-panel-head"><h2>💭 任务</h2><button class="icon panel-toggle" id="taskClose" title="收起左侧任务面板" aria-label="收起左侧任务面板">&lt;</button></div>
+    <p class="meta" id="panelTaskMeta"></p>
+    <div class="task-panel-body">
+      <h3 class="task-panel-sub">今日未完成</h3>
+      <div id="panelTaskPending"></div>
+    </div>
+    <div class="task-panel-foot"><button class="icon" id="panelTaskOpen" title="打开任务聚合页">打开任务聚合页</button></div>
+  </aside>
   <section class="card initial-import" id="initialImport" hidden>
     <h2>是否导入 Looki 历史日程？</h2>
     <p class="meta" id="initialImportRange"></p>
@@ -267,29 +514,24 @@ dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
         <button class="primary" id="add">补录</button>
       </div>
     </div>
-    <div class="tl-tools">
-      <div class="seg" id="scaleSwitch"><button type="button" data-scale="day" class="on">日</button><button type="button" data-scale="week">周</button><button type="button" data-scale="month">月</button></div>
-      <div class="seg" id="mediaFilters"><button type="button" data-media="all" class="on">全部</button><button type="button" data-media="photo">照片</button><button type="button" data-media="video">视频</button><button type="button" data-media="audio">音频</button><button type="button" data-media="transcript">摘要/转写</button></div>
-      <label class="inline-check"><input type="checkbox" id="onlyEvidence">仅有证据</label>
-      <span class="range-hint">周/月为聚合视图，点击某天进入日视图</span>
-    </div>
     <div class="timeline" id="timeline"></div>
   </section>
 
-  <aside class="side" id="sidePanel" aria-label="日历与当天时间轴">
-    <div class="side-head"><h2>日历与目录</h2><button class="icon" id="sideClose" title="收起侧栏">×</button></div>
+  <aside class="side" id="sidePanel" aria-label="日历">
+    <div class="side-head"><h2>日历</h2><button class="icon panel-toggle" id="sideClose" title="收起右侧日历" aria-label="收起右侧日历">&gt;</button></div>
     <div class="side-body">
       <section class="card">
         <div class="cal-head">
           <h2 id="calTitle"></h2>
           <div class="head-acts">
+            <div class="seg" id="scaleSwitch"><button type="button" data-scale="day" class="on">日</button><button type="button" data-scale="week">周</button><button type="button" data-scale="month">月</button></div>
             <button class="icon" id="mPrev" title="上一月">‹</button>
             <button class="icon" id="mToday" title="回到本月">•</button>
             <button class="icon" id="mNext" title="下一月">›</button>
           </div>
         </div>
         <div class="cal-grid" id="calGrid"></div>
-        <div class="legend"><i></i>黄点表示当天有日程记录（最多 5 个）</div>
+        <div class="legend"><i></i>深色标记表示当天有日程记录（最多 5 个）</div>
       </section>
 
       <section class="card">
@@ -300,44 +542,153 @@ dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
     <div class="side-foot">未来扩展区域</div>
   </aside>
   <div class="side-backdrop" id="sideBackdrop"></div>
+  <div class="task-panel-backdrop" id="taskBackdrop"></div>
+  <button type="button" class="edge edge-left" id="edgeLeft" aria-controls="taskPanel" aria-expanded="false" title="展开左侧任务面板" aria-label="展开左侧任务面板">›</button>
+  <button type="button" class="edge edge-right" id="edgeRight" aria-controls="sidePanel" aria-expanded="false" title="展开右侧日历" aria-label="展开右侧日历">‹</button>
 </main>
 
-<main class="card settings" id="viewSettings" hidden>
-  <h2>插件设置</h2>
-  <p class="meta" id="cfgNotice">保存后写入插件配置；自动同步按新的间隔重新计时。</p>
-  <div class="grid2">
-    <label class="full">Looki API Key
-      <div class="keyrow"><input id="cfgKey" type="password" autocomplete="off"><button type="button" class="icon" id="eye" title="显示/隐藏">👁</button></div>
-      <small>保持掩码不修改，留空保存可清除密钥</small>
-    </label>
-    <label class="full">接口地址<input id="cfgUrl" placeholder="https://open.looki.tech/api/v1"></label>
-    <label>同步间隔（分钟）<input id="cfgInterval" type="number" min="1" max="1440"></label>
-    <label>回填天数<input id="cfgBackfill" type="number" min="1" max="366"></label>
-    <label>时区<input id="cfgTz" placeholder="Asia/Shanghai"></label>
-    <label>请求超时（秒）<input id="cfgTimeout" type="number" min="5" max="120"></label>
-    <label>线索天数<input id="cfgClueDays" type="number" min="1" max="31"></label>
-    <label>线索条数上限<input id="cfgMaxClues" type="number" min="0" max="10"></label>
-    <label>线索注入范围<select id="cfgScope"><option>仅对管理成员开放</option><option>关闭</option></select></label>
-    <h3>访问与白名单</h3>
-    <label>白名单成员 ID<textarea id="cfgWhitelistUsers" rows="3" placeholder="每行一个，也可用逗号分隔"></textarea></label>
-    <label>白名单群 ID<textarea id="cfgWhitelistGroups" rows="3" placeholder="每行一个，也可用逗号分隔"></textarea></label>
-    <h3>图片与模型</h3>
-    <label>候选图片数量<input id="cfgImageCount" type="number" min="1" max="9"></label>
-    <label>挑图多模态模型<select id="cfgSelectionProvider"><option value="">跟随当前对话模型</option></select></label>
-    <label id="fieldGenerationMode">图生图方式<select id="cfgGenerationMode"><option value="multimodal">AstrBot 多模态模型</option><option value="openai_compatible">兼容图生图接口</option></select></label>
-    <label id="fieldGenerationProvider">图生图多模态模型<select id="cfgGenerationProvider"><option value="">跟随挑图模型</option></select></label>
-    <label class="full" id="fieldImageStyle">默认图生图风格<textarea id="cfgImageStyle" rows="3"></textarea></label>
-    <label class="full" id="fieldImageApiUrl">兼容图生图接口地址<input id="cfgImageApiUrl" placeholder="/v1、完整 /images/edits 或 /images/generations"></label>
-    <label id="fieldImageApiModel">兼容图生图模型<input id="cfgImageApiModel" placeholder="模型名称"></label>
-    <label id="fieldImageApiKey">兼容接口 API Key<input id="cfgImageApiKey" type="password" autocomplete="off"><small>保持掩码不修改，留空保存可清除；无密钥接口可留空</small></label>
+<main class="card settings" id="viewTasks" hidden>
+  <h2>任务聚合</h2>
+  <p class="meta" id="taskMeta"></p>
+  <h3>👍 本日完成任务</h3>
+  <div id="taskDone"></div>
+  <h3>💭 任务</h3>
+  <div id="taskPending"></div>
+  <div id="taskDeletedWrap" hidden>
+    <h3>🗑 已删除任务</h3>
+    <div id="taskDeleted"></div>
   </div>
-  <div class="checks">
-    <label class="check"><input id="cfgAuto" type="checkbox"><span>自动后台同步<small>按设定间隔轮询；首次连接需先完成历史日程导入选择</small></span></label>
-    <label class="check"><input id="cfgGroup" type="checkbox"><span>在群聊中开放查询<small>总开关默认关闭；白名单成员和白名单群无需开启此项</small></span></label>
-    <label class="check"><input id="cfgImageOriginal" type="checkbox"><span>直接发送选中的原图<small>关闭时进行图生图；两种模式都会先由模型从候选图中挑选 1 张</small></span></label>
-    <label class="check"><input id="cfgRaw" type="checkbox"><span>保存远端原始 JSON<small>含隐私原文，默认关闭，仅供调试</small></span></label>
+</main>
+
+<main class="card rhine-config" id="viewSettings" hidden>
+  <header class="config-page-intro">
+    <div class="config-title-block">
+      <div class="config-kicker"><strong>LOOKI</strong><span>CONFIGURATION / 06 MODULES</span></div>
+      <h2>插件设置</h2>
+      <p class="meta" id="cfgNotice">保存后写入插件配置；自动同步按新的间隔重新计时。</p>
+    </div>
+    <div class="config-actions">
+      <span class="config-revision">LOCAL / CONFIG</span>
+      <button class="icon" id="cfgCancel">取消</button><button class="primary" id="cfgSave">保存设置</button>
+    </div>
+  </header>
+
+  <nav class="config-section-nav" id="setNav" aria-label="设置分组">
+    <a href="#sec-sync" data-sec="sync"><i>01</i><span>同步</span></a>
+    <a href="#sec-access" data-sec="access"><i>02</i><span>触发与权限</span></a>
+    <a href="#sec-journal" data-sec="journal"><i>03</i><span>日记与任务</span></a>
+    <a href="#sec-reminder" data-sec="reminder"><i>04</i><span>任务提醒</span></a>
+    <a href="#sec-image" data-sec="image"><i>05</i><span>图像服务</span></a>
+    <a href="#sec-privacy" data-sec="privacy"><i>06</i><span>数据与隐私</span></a>
+  </nav>
+
+  <div class="config-grid">
+    <details class="config-fold-panel" id="configGeneral">
+      <summary>
+        <span class="fold-heading"><i>01</i><span><strong>通用设置</strong><small>GENERAL / CONNECTION &amp; ACCESS</small></span></span>
+        <span class="fold-state"><span class="fold-closed-label">展开面板</span><span class="fold-open-label">收起面板</span><b>＋</b></span>
+      </summary>
+      <div class="config-fold-body">
+        <div class="config-common-section-head"><span>基础连接、访问与任务规则</span><span>04 SECTIONS</span></div>
+
+        <section class="config-card wide" id="sec-sync">
+          <div class="config-card-head"><h3>同步</h3><p class="meta">Looki API 凭据与后台轮询节奏。</p><span class="config-code">SYNC.01</span></div>
+          <div class="config-form-grid">
+            <label class="full">Looki API Key
+              <div class="keyrow"><input id="cfgKey" type="password" autocomplete="off"><button type="button" class="icon" id="eye" title="显示/隐藏">👁</button></div>
+              <small>保持掩码不修改，留空保存可清除密钥</small>
+            </label>
+            <label class="full">接口地址<input id="cfgUrl" placeholder="https://open.looki.tech/api/v1"><small>默认地址可用，不怎么需要改</small></label>
+            <label>同步间隔（分钟）<input id="cfgInterval" type="number" min="1" max="1440"></label>
+            <label>回填天数<input id="cfgBackfill" type="number" min="1" max="366"></label>
+            <label>时区<input id="cfgTz" placeholder="Asia/Shanghai"></label>
+            <label>请求超时（秒）<input id="cfgTimeout" type="number" min="5" max="120"></label>
+          </div>
+          <div class="toggle-list">
+            <label class="toggle-row"><input id="cfgAuto" type="checkbox"><span>自动后台同步<small>按设定间隔轮询；首次连接需先完成历史日程导入选择</small></span></label>
+          </div>
+        </section>
+
+        <section class="config-card" id="sec-access">
+          <div class="config-card-head"><h3>触发与权限</h3><p class="meta">谁可以查询日程、注入多少生活线索。</p><span class="config-code">AUTH.02</span></div>
+          <div class="config-form-grid">
+            <label class="full">线索注入范围<select id="cfgScope"><option>仅对管理员私聊开放</option><option>仅对白名单用户/群启用</option><option>所有人</option><option>关闭</option></select></label>
+            <label>线索天数<input id="cfgClueDays" type="number" min="1" max="31"></label>
+            <label>线索条数上限<input id="cfgMaxClues" type="number" min="0" max="10"></label>
+            <label class="full">白名单成员 ID<textarea id="cfgWhitelistUsers" rows="3" placeholder="每行一个，也可用逗号分隔"></textarea></label>
+            <label class="full">白名单群 ID<textarea id="cfgWhitelistGroups" rows="3" placeholder="每行一个，也可用逗号分隔"></textarea></label>
+          </div>
+          <div class="toggle-list">
+            <label class="toggle-row"><input id="cfgGroup" type="checkbox"><span>在群聊中开放查询<small>总开关默认关闭；白名单成员和白名单群无需开启此项</small></span></label>
+          </div>
+        </section>
+
+        <section class="config-card" id="sec-journal">
+          <div class="config-card-head"><h3>日记与任务</h3><p class="meta">时间轴显示与任务清理规则。</p><span class="config-code">TASK.03</span></div>
+          <div class="config-form-grid">
+            <label class="full">任务逾期天数<input id="cfgTaskExpireDays" type="number" min="0" max="365"><small>来源日期距今超过该天数的未完成任务不再进入检索与提醒，页面仍可查看；默认 3 天。</small></label>
+          </div>
+          <div class="toggle-list">
+            <label class="toggle-row"><input id="cfgShowJournals" type="checkbox"><span>在时间轴中显示 Looki AI 日志与总结<small>只影响页面展示，不影响日志同步与任务完成状态</small></span></label>
+            <label class="toggle-row"><input id="cfgHideDeleted" type="checkbox"><span>任务聚合页隐藏已删除任务<small>关闭后已删除任务在列表末尾以删除线显示，可再次恢复</small></span></label>
+          </div>
+        </section>
+
+        <section class="config-card wide" id="sec-reminder">
+          <div class="config-card-head"><h3>任务提醒</h3><p class="meta">每个接收人独立节流，由 Bot 人设挑选并自然表达。</p><span class="config-code">REMINDER.04</span></div>
+          <div class="config-form-grid">
+            <label class="full">接收任务提醒的用户 ID<textarea id="cfgReminderUsers" rows="3" placeholder="每行一个，也可用逗号分隔"></textarea><small>只发送给这里配置的用户，不复用管理员或日程白名单。</small></label>
+            <label class="full">独立提醒间隔（分钟）<input id="cfgTaskReminderInterval" type="number" min="1" max="10080"><small>每个接收人在间隔内最多收到一条，只选模型认为最有价值的一项任务；默认 60 分钟。</small></label>
+          </div>
+          <div class="toggle-list">
+            <label class="toggle-row"><input id="cfgTaskReminders" type="checkbox"><span>启用 Bot 任务提醒<small>由模型筛选值得提醒的事项，并生成符合 Bot 人设的自然话术</small></span></label>
+            <label class="toggle-row"><input id="cfgTaskAutoDelete" type="checkbox"><span>自动删除低价值任务<small>软删除本轮未选中的任务；已有提醒记录或被其他接收人选中的任务保留</small></span></label>
+            <label class="toggle-row"><input id="cfgTaskCompletion" type="checkbox"><span>识别私聊完成回复<small>回复“完成了”“搞定了”等，将最近一次提醒且未完成的任务标为完成</small></span></label>
+          </div>
+        </section>
+      </div>
+    </details>
+
+    <details class="config-fold-panel" id="configMedia">
+      <summary>
+        <span class="fold-heading"><i>02</i><span><strong>图像与数据</strong><small>MEDIA / GENERATION &amp; PRIVACY</small></span></span>
+        <span class="fold-state"><span class="fold-closed-label">展开面板</span><span class="fold-open-label">收起面板</span><b>＋</b></span>
+      </summary>
+      <div class="config-fold-body">
+        <section class="config-card wide" id="sec-image">
+          <div class="config-card-head"><h3>图像服务</h3><p class="meta">选图与图生图所用的模型和接口。</p><span class="config-code">IMAGE.05</span></div>
+          <div class="config-form-grid">
+            <label>候选图片数量<input id="cfgImageCount" type="number" min="1" max="9"></label>
+            <label>挑图多模态模型<select id="cfgSelectionProvider"><option value="">跟随当前对话模型</option></select></label>
+          </div>
+          <div class="toggle-list">
+            <label class="toggle-row"><input id="cfgImageOriginal" type="checkbox"><span>直接发送选中的原图<small>关闭时进行图生图；两种模式都会先由模型从候选图中挑选 1 张</small></span></label>
+          </div>
+          <details class="config-subfold">
+            <summary><span>图生图模型</span><small>MODEL / MULTIMODAL</small><b>＋</b></summary>
+            <div class="config-form-grid">
+              <label id="fieldGenerationMode">图生图方式<select id="cfgGenerationMode"><option value="multimodal">AstrBot 多模态模型</option><option value="openai_compatible">兼容图生图接口</option></select></label>
+              <label id="fieldGenerationProvider">图生图多模态模型<select id="cfgGenerationProvider"><option value="">跟随挑图模型</option></select></label>
+              <label class="full" id="fieldImageStyle">默认图生图风格<textarea id="cfgImageStyle" rows="3"></textarea></label>
+            </div>
+          </details>
+          <details class="config-subfold">
+            <summary><span>兼容图生图接口</span><small>API / OPENAI COMPATIBLE</small><b>＋</b></summary>
+            <div class="config-form-grid">
+              <label class="full" id="fieldImageApiUrl">接口地址<input id="cfgImageApiUrl" placeholder="/v1、完整 /images/edits 或 /images/generations"></label>
+              <label id="fieldImageApiModel">模型<input id="cfgImageApiModel" placeholder="模型名称"></label>
+              <label id="fieldImageApiKey">API Key<input id="cfgImageApiKey" type="password" autocomplete="off"><small>保持掩码不修改，留空保存可清除；无密钥接口可留空</small></label>
+            </div>
+          </details>
+        </section>
+
+        <section class="config-card wide privacy-card" id="sec-privacy">
+          <div class="config-card-head"><h3>数据与隐私</h3><p class="meta">只有一项调试开关，默认关闭。</p><span class="config-code">DATA.06</span></div>
+          <label class="toggle-row"><input id="cfgRaw" type="checkbox"><span>保存远端原始 JSON<small>含隐私原文，默认关闭，仅供调试</small></span></label>
+        </section>
+      </div>
+    </details>
   </div>
-  <div class="foot"><button class="icon" id="cfgCancel">取消</button><button class="primary" id="cfgSave">保存设置</button></div>
 </main>
 
 <dialog id="editor"><form method="dialog">
@@ -351,9 +702,17 @@ dialog menu button.danger{color:#b4451f;border-color:#ecc9bd}
   <menu><button value="cancel">取消</button><button type="button" class="danger" id="delete">删除</button><button type="button" class="primary" id="save">保存</button></menu>
 </form></dialog>
 
+<dialog id="textEditor"><form method="dialog">
+  <h2 id="textEditorTitle">编辑</h2>
+  <label>内容<textarea id="textEditorBody" rows="5"></textarea></label>
+  <menu><button value="cancel">取消</button><button type="button" class="primary" id="textEditorSave">保存</button></menu>
+</form></dialog>
+
+<script src="./vendor/marked.umd.js"></script>
+<script src="./vendor/purify.min.js"></script>
 <script src="/api/plugin/page/bridge-sdk.js"></script>
 <script type="module">
-const bridge=window.AstrBotPluginPage;await bridge.ready();
+const bridge=window.AstrBotPluginPage;if(bridge)await bridge.ready();
 const $=id=>document.getElementById(id);
 const pad=n=>String(n).padStart(2,'0');
 const fmt=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
@@ -362,12 +721,12 @@ const localDT=s=>{const d=new Date(s);return `${d.getFullYear()}-${pad(d.getMont
 const todayStr=()=>fmt(new Date());
 const WEEK='日一二三四五六';
 
-let calY,calM,day=todayStr(),items=[],selectedId=null,syncing=false,initialImportBusy=false,scale='day',mediaFilter='all',onlyEvidence=false,evidence={};
+let calY,calM,day=todayStr(),items=[],selectedId=null,syncing=false,initialImportBusy=false,scale='day',journals=[],showJournals=true,dayTasks=[];
 {const n=new Date();calY=n.getFullYear();calM=n.getMonth()+1}
 const dialog=$('editor'),form=dialog.querySelector('form');
 
 /* ---------- 右侧栏：收起 / 拉出 ---------- */
-const sideEl=$('sidePanel'),sideBtn=$('sideToggle'),sideBackdrop=$('sideBackdrop');
+const sideEl=$('sidePanel'),sideBtn=$('sideToggle'),sideBackdrop=$('sideBackdrop'),sideEdge=$('edgeRight');
 const narrow=()=>window.matchMedia('(max-width:960px)').matches;
 let sideOpen=!narrow();
 function setSide(open,lockScroll=true){
@@ -376,25 +735,60 @@ function setSide(open,lockScroll=true){
   sideEl.classList.toggle('open',open);
   sideBackdrop.classList.toggle('show',narrow()&&open);
   sideBtn.setAttribute('aria-expanded',String(open));
+  sideBtn.textContent=open?'>':'<';
+  const label=open?'收起右侧日历':'展开右侧日历';
+  sideBtn.title=label;sideBtn.setAttribute('aria-label',label);
+  sideEdge.textContent=open?'›':'‹';
+  sideEdge.setAttribute('aria-expanded',String(open));
+  sideEdge.title=label;sideEdge.setAttribute('aria-label',label);
   document.body.classList.toggle('side-lock',narrow()&&open&&lockScroll);
 }
 sideBtn.onclick=()=>setSide(!sideOpen);
+sideEdge.onclick=()=>setSide(!sideOpen);
 $('sideClose').onclick=()=>setSide(false);
 sideBackdrop.onclick=()=>setSide(false);
-addEventListener('keydown',e=>{if(e.key==='Escape'&&narrow()&&sideOpen)setSide(false)});
-addEventListener('resize',()=>setSide(sideOpen,false));
+addEventListener('keydown',e=>{if(e.key==='Escape'&&narrow()){if(sideOpen)setSide(false);if(taskOpen)setTask(false)}});
+addEventListener('resize',()=>{setSide(sideOpen,false);setTask(taskOpen)});
 setSide(sideOpen);
 
-/* ---------- 标签页 ---------- */
-function switchTab(settings){
-  $('tabPlan').classList.toggle('active',!settings);
-  $('tabSettings').classList.toggle('active',settings);
-  $('viewPlan').hidden=settings;
-  $('viewSettings').hidden=!settings;
-  if(settings&&narrow())setSide(false);
+/* ---------- 左侧任务面板：收起 / 拉出 ---------- */
+const taskEl=$('taskPanel'),taskBtn=$('taskToggle'),taskBackdrop=$('taskBackdrop'),taskEdge=$('edgeLeft');
+let taskOpen=!narrow();
+function setTask(open){
+  taskOpen=open;
+  $('viewPlan').classList.toggle('task-hidden',!narrow()&&!open);
+  taskEl.classList.toggle('open',open);
+  taskBackdrop.classList.toggle('show',narrow()&&open);
+  taskBtn.setAttribute('aria-expanded',String(open));
+  taskBtn.textContent=open?'<':'>';
+  const label=open?'收起左侧任务面板':'展开左侧任务面板';
+  taskBtn.title=label;taskBtn.setAttribute('aria-label',label);
+  taskEdge.textContent=open?'‹':'›';
+  taskEdge.setAttribute('aria-expanded',String(open));
+  taskEdge.title=label;taskEdge.setAttribute('aria-label',label);
+  document.body.classList.toggle('task-lock',narrow()&&open);
 }
-$('tabPlan').onclick=()=>switchTab(false);
-$('tabSettings').onclick=async()=>{switchTab(true);await loadConfig()};
+taskBtn.onclick=()=>setTask(!taskOpen);
+taskEdge.onclick=()=>setTask(!taskOpen);
+$('taskClose').onclick=()=>setTask(false);
+taskBackdrop.onclick=()=>setTask(false);
+$('panelTaskOpen').onclick=()=>switchTab('tasks');
+setTask(taskOpen);
+
+/* ---------- 标签页 ---------- */
+function switchTab(name){
+  $('tabPlan').classList.toggle('active',name==='plan');
+  $('tabTasks').classList.toggle('active',name==='tasks');
+  $('tabSettings').classList.toggle('active',name==='settings');
+  $('viewPlan').hidden=name!=='plan';
+  $('viewTasks').hidden=name!=='tasks';
+  $('viewSettings').hidden=name!=='settings';
+  if(name!=='plan'&&narrow()){setSide(false);setTask(false)}
+  if(name==='tasks')loadTasks();
+}
+$('tabPlan').onclick=()=>switchTab('plan');
+$('tabTasks').onclick=()=>switchTab('tasks');
+$('tabSettings').onclick=async()=>{switchTab('settings');window.scrollTo({top:0});await loadConfig()};
 
 /* ---------- 月视图 ---------- */
 async function loadCalendar(){
@@ -431,61 +825,10 @@ $('mToday').onclick=()=>{const n=new Date();calY=n.getFullYear();calM=n.getMonth
 /* ---------- 视图、筛选与时间轴 ---------- */
 const parseDay=s=>new Date(`${s}T00:00:00`);
 const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x};
-const mediaLabel=t=>({photo:'照片',video:'视频',audio:'音频',transcript:'转写',summary:'摘要',unknown:'未知'}[t]||String(t||'未知'));
 const syncCalToDay=()=>{const d=parseDay(day);calY=d.getFullYear();calM=d.getMonth()+1};
 const emptyBox=text=>{const el=document.createElement('div');el.className='empty';el.textContent=text;return el};
 function syncScaleUI(){for(const b of $('scaleSwitch').children)b.classList.toggle('on',b.dataset.scale===scale)}
 function setScale(next){scale=next;syncScaleUI();if(scale!=='day')syncCalToDay();loadPlan()}
-function mediaBadge(type){const el=document.createElement('span');el.className='media-badge '+(type||'unknown');el.textContent=mediaLabel(type);return el}
-function mediaTypes(item){
-  const set=new Set((item.media_types||[]).filter(t=>t&&t!=='unknown'));
-  for(const row of (evidence[item.looki_id]||[]))if(row.media_type&&row.media_type!=='unknown')set.add(row.media_type);
-  return [...set];
-}
-function allMediaTypes(item,counts){
-  const set=new Set(mediaTypes(item));
-  if(counts)for(const t of Object.keys(counts))if(t&&t!=='unknown')set.add(t);
-  return [...set];
-}
-function matches(item,counts){
-  const types=allMediaTypes(item,counts);
-  if(mediaFilter!=='all'){
-    const wanted=mediaFilter==='transcript'?['transcript','summary']:[mediaFilter];
-    if(!types.some(t=>wanted.includes(t)))return false;
-  }
-  return !onlyEvidence||types.length>0;
-}
-function mediaBadges(item,counts){
-  const wrap=document.createElement('span');wrap.className='media-badges';
-  const types=allMediaTypes(item,counts);
-  if(!types.length)wrap.append(mediaBadge('unknown'));
-  else for(const t of types)wrap.append(mediaBadge(t));
-  return wrap;
-}
-function evidenceBox(entries){
-  const box=document.createElement('div');box.className='tl-evidence';box.hidden=true;
-  for(const entry of entries){
-    const row=document.createElement('div');row.className='ev-row';
-    row.append(mediaBadge(entry.media_type||'unknown'));
-    const bits=[];
-    if(entry.width&&entry.height)bits.push(`${entry.width}×${entry.height}`);
-    if(entry.duration_ms)bits.push(`${Math.round(entry.duration_ms/1000)} 秒`);
-    if(entry.mime_type)bits.push(entry.mime_type);
-    if(entry.has_thumbnail)bits.push('有缩略图');
-    if(entry.availability==='denied')bits.push('不可直接访问');
-    if(entry.availability==='unsupported')bits.push('类型暂不支持');
-    const meta=document.createElement('span');meta.className='ev-meta';meta.textContent=bits.join(' · ');
-    row.append(meta);box.append(row);
-    if(entry.text_excerpt){
-      const p=document.createElement('p');p.className='ev-excerpt';
-      const tag=document.createElement('span');tag.className='ev-infer';tag.textContent='摘要推测 · 非原始录音';
-      p.append(tag);
-      p.append(document.createTextNode(entry.text_excerpt));
-      box.append(p);
-    }
-  }
-  return box;
-}
 async function loadPlan(){
   if(scale==='week')return loadWeek();
   if(scale==='month')return loadMonth();
@@ -496,32 +839,264 @@ async function loadDay(){
   const d=parseDay(day);
   $('dayTitle').textContent=`${day} 周${WEEK[d.getDay()]}`;
   const tl=$('timeline');tl.replaceChildren();
-  items=[];evidence={};
+  items=[];journals=[];showJournals=true;dayTasks=[];
   try{items=await bridge.apiGet('events',{start:day,end:day})}catch(e){items=[]}
   if(!Array.isArray(items))items=[];
-  try{const data=await bridge.apiGet('media',{start:day,end:day});if(data&&typeof data==='object')evidence=data}catch(e){}
-  const visible=items.filter(item=>matches(item));
-  $('dayMeta').textContent=items.length?`共 ${items.length} 条记录${visible.length!==items.length?` · 筛选后 ${visible.length} 条`:''}`:'';
-  if(!items.length){
+  try{
+    const data=await bridge.apiGet('journals',{start:day,end:day});
+    if(data){journals=Array.isArray(data.journals)?data.journals:[];showJournals=data.show_looki_journals!==false}
+  }catch(e){}
+  try{
+    const data=await bridge.apiGet('tasks',{start:day,end:day,include_deleted:1});
+    if(data)dayTasks=[...data.pending,...data.completed,...(data.deleted||[])];
+  }catch(e){}
+  const visible=items;
+  $('dayMeta').textContent=items.length?`共 ${items.length} 条记录`:'';
+  if(!visible.length){
     tl.append(emptyBox('这一天没有日程记录'));
-    if(selectedId!==null){selectedId=null}
+    if(selectedId!==null)selectedId=null;
     renderOutline([]);
-    return;
-  }
-  if(!visible.length){tl.append(emptyBox('没有符合当前筛选条件的记录'));renderOutline([]);return}
-  if(!visible.some(x=>x.id===selectedId))selectedId=null;
-  for(const item of visible)tl.append(timelineItem(item));
-
-  if(day===todayStr()){
-    const lastEnd=items.reduce((m,x)=>Math.max(m,new Date(x.end_at).getTime()),0);
-    if(new Date(lastEnd).getHours()<21){
-      const rec=document.createElement('div');rec.className='recording';
-      const dot=document.createElement('span');dot.className='pulse';
-      rec.append(dot,document.createTextNode('正在记录.ing'));
-      tl.append(rec);
+  }else{
+    if(!visible.some(x=>x.id===selectedId))selectedId=null;
+    for(const item of visible)tl.append(timelineItem(item));
+    renderOutline(visible);
+    if(day===todayStr()){
+      const lastEnd=items.reduce((m,x)=>Math.max(m,new Date(x.end_at).getTime()),0);
+      if(new Date(lastEnd).getHours()<21){
+        const rec=document.createElement('div');rec.className='recording';
+        const dot=document.createElement('span');dot.className='pulse';
+        rec.append(dot,document.createTextNode('正在记录.ing'));
+        tl.append(rec);
+      }
     }
   }
-  renderOutline(visible);
+  if(showJournals&&journals.length)appendJournals(tl);
+}
+
+/* ---------- Looki AI 日志与任务 ---------- */
+const MD_HEADING_TAGS=new Set(['H1','H2','H3','H4','H5','H6']);
+function splitMarkdownSections(root){
+  // 每个 Markdown 标题开启一个新块，标题后的内容跟随该块直到下一个标题
+  const nodes=Array.from(root.childNodes);
+  root.replaceChildren();
+  let section=null;
+  for(const node of nodes){
+    const isHeading=node.nodeType===1&&MD_HEADING_TAGS.has(node.tagName);
+    if(isHeading||!section){
+      section=document.createElement('section');
+      section.className=isHeading?'md-section':'md-section md-section-plain';
+      root.append(section);
+    }
+    section.append(node);
+  }
+}
+function markdownBody(text,className){
+  const host=document.createElement('div');
+  host.className=('md-body '+(className||'')).trim();
+  const raw=String(text||'').trim();
+  if(!raw)return host;
+  if(!window.marked||!window.DOMPurify){
+    const p=document.createElement('p');p.textContent=raw;host.append(p);return host;
+  }
+  // Looki 文本来自外部接口：先解析 Markdown，再消毒，禁止脚本、表单与媒体标签
+  const html=window.marked.parse(raw,{gfm:true,breaks:true});
+  host.innerHTML=window.DOMPurify.sanitize(html,{
+    USE_PROFILES:{html:true},
+    FORBID_TAGS:['img','iframe','object','embed','form','input','button','textarea','select','style','svg','math','video','audio'],
+    FORBID_ATTR:['style'],
+  });
+  splitMarkdownSections(host);
+  return host;
+}
+function journalText(content){
+  return String(content||'').split('\n')
+    .filter(line=>!/^\s*[-*+]\s*\[[ xX✓✔]?\]\s*/.test(line))
+    .join('\n').trim();
+}
+function journalBlock(journal){
+  const box=document.createElement('div');box.className='tl-journal';box.id='jr-'+journal.id;
+  const head=document.createElement('div');head.className='tl-journal-head';
+  const tag=document.createElement('div');tag.className='tl-journal-tag';tag.textContent='Looki AI 总结';
+  const editBtn=document.createElement('button');editBtn.type='button';editBtn.className='ghost';editBtn.textContent='编辑';
+  editBtn.onclick=e=>{e.stopPropagation();editJournal(journal)};
+  head.append(tag,editBtn);box.append(head);
+  if(journal.recorded_at){
+    const time=document.createElement('time');time.className='tl-journal-time';time.dateTime=journal.recorded_at;
+    time.textContent=`记录时间 ${hhmm(journal.recorded_at)}`;
+    box.append(time);
+  }else{
+    const note=document.createElement('div');note.className='tl-journal-time';
+    note.textContent='没有可用的记录时间，无法定位到具体时段';
+    box.append(note);
+  }
+  const text=journalText(journal.content||journal.description);
+  if(text)box.append(markdownBody(text,'tl-journal-content'));
+  if(journal.tasks&&journal.tasks.length)box.append(taskList(journal.tasks));
+  return box;
+}
+function taskList(tasks,{includeDeleted=false}={}){
+  const list=document.createElement('ul');list.className='task-list';
+  for(const task of tasks){
+    if(task.deleted&&!includeDeleted)continue;
+    const li=document.createElement('li');li.className='task-row'+(task.done?' done':'')+(task.deleted?' deleted':'');
+    const cb=document.createElement('input');cb.type='checkbox';cb.checked=!!task.done;cb.disabled=!!task.deleted;
+    cb.onclick=e=>e.stopPropagation();
+    cb.onchange=()=>toggleTask(task,cb);
+    const body=document.createElement('span');body.className='task-body';body.textContent=task.body;
+    const ops=document.createElement('span');ops.className='task-ops';
+    ops.append(opButton(task.deleted?'恢复':'×',task.deleted?'恢复任务':'删除任务',()=>task.deleted?restoreTask(task):removeTask(task)));
+    li.append(cb,body,ops);list.append(li);
+  }
+  return list;
+}
+function appendJournals(tl){
+  // 只展示已匹配到具体活动的日志；未匹配日志由后端屏蔽，不进入页面
+  for(const journal of journals){
+    if(journal.match_state!=='matched'||!journal.schedule_id)continue;
+    const row=document.getElementById('tl-'+journal.schedule_id);
+    if(row)(row.querySelector('.tl-body')||row).append(journalBlock(journal));
+  }
+}
+async function toggleTask(task,checkbox){
+  const target=checkbox.checked;
+  checkbox.disabled=true;
+  try{
+    await bridge.apiPost(`tasks/${task.id}/toggle`,{done:target});
+    if(!$('viewTasks').hidden||!$('viewPlan').hidden)await loadTasks();
+    if(scale==='day')await loadDay();
+  }catch(err){
+    checkbox.checked=!target;
+    checkbox.disabled=false;
+    alert('操作失败：'+(err?.message||err));
+  }
+}
+async function locateTask(task){
+  if($('viewPlan').hidden)switchTab('plan');
+  if(task.day!==day||scale!=='day'){
+    day=task.day;syncCalToDay();scale='day';syncScaleUI();loadCalendar();await loadPlan();
+  }
+  const target=(task.schedule_id&&document.getElementById('tl-'+task.schedule_id))||document.getElementById('jr-'+task.journal_id);
+  if(!target)return;
+  if(task.schedule_id)select(task.schedule_id,false);
+  target.scrollIntoView({behavior:'smooth',block:'center'});
+  target.classList.add('flash');
+  setTimeout(()=>target.classList.remove('flash'),1400);
+}
+function taskEmpty(text){const p=document.createElement('p');p.className='task-empty';p.textContent=text;return p}
+function opButton(text,title,handler){
+  const b=document.createElement('button');b.type='button';b.className='ghost';b.textContent=text;b.title=title;
+  b.onclick=e=>{e.stopPropagation();handler()};
+  return b;
+}
+function refreshTaskViews(){const jobs=[loadTasks()];if(scale==='day')jobs.push(loadDay());return Promise.all(jobs)}
+async function removeTask(task){
+  try{await bridge.apiPost(`tasks/${task.id}/delete`,{});await refreshTaskViews()}
+  catch(err){alert('删除失败：'+(err?.message||err))}
+}
+async function restoreTask(task){
+  try{await bridge.apiPost(`tasks/${task.id}/restore`,{});await refreshTaskViews()}
+  catch(err){alert('恢复失败：'+(err?.message||err))}
+}
+async function moveTask(task,direction){
+  try{await bridge.apiPost(`tasks/${task.id}/move`,{direction});await refreshTaskViews()}
+  catch(err){alert('排序失败：'+(err?.message||err))}
+}
+function editTask(task){
+  openTextEditor({title:'编辑任务',value:task.body,maxlength:500,rows:3,onSave:async value=>{
+    await bridge.apiPost(`tasks/${task.id}/update`,{body:value});
+    await refreshTaskViews();
+  }});
+}
+function editJournal(journal){
+  openTextEditor({title:'编辑 AI 总结',value:journal.content||journal.description||'',maxlength:50000,rows:14,onSave:async value=>{
+    await bridge.apiPost(`journals/${journal.id}/update`,{content:value});
+    await loadDay();
+  }});
+}
+function editCorrection(item,correction){
+  openTextEditor({title:correction?'修改纠正总结':'新增纠正总结',value:correction?correction.note:'',maxlength:2000,rows:6,onSave:async value=>{
+    if(correction)await bridge.apiPost(`corrections/${correction.id}/update`,{note:value});
+    else await bridge.apiPost(`events/${item.id}/corrections`,{note:value});
+    await loadDay();
+  }});
+}
+async function removeCorrection(correction){
+  if(!confirm('删除这条纠正总结？'))return;
+  try{await bridge.apiPost(`corrections/${correction.id}/delete`,{});await loadDay()}
+  catch(err){alert('删除失败：'+(err?.message||err))}
+}
+let textSaveHandler=null;
+const textEditor=$('textEditor');
+function openTextEditor({title,value,maxlength=500,rows=5,onSave}){
+  $('textEditorTitle').textContent=title;
+  const box=$('textEditorBody');
+  box.value=value||'';box.maxLength=maxlength;box.rows=rows;
+  textSaveHandler=onSave;
+  textEditor.showModal();box.focus();
+}
+$('textEditorSave').onclick=async()=>{
+  const box=$('textEditorBody'),value=box.value.trim();
+  if(!value){box.focus();return}
+  const btn=$('textEditorSave');btn.disabled=true;
+  try{await textSaveHandler(value);textEditor.close()}
+  catch(err){alert('保存失败：'+(err?.message||err))}
+  finally{btn.disabled=false}
+};
+function taskPageRow(task,{compact=false}={}){
+  const row=document.createElement('div');row.className='task-page-row'+(task.done?' done':'')+(task.deleted?' deleted':'');
+  const cb=document.createElement('input');cb.type='checkbox';cb.checked=!!task.done;cb.disabled=!!task.deleted;
+  cb.onchange=()=>toggleTask(task,cb);
+  const main=document.createElement('div');main.className='task-page-main';
+  const body=document.createElement('button');body.type='button';body.className='task-page-body';
+  body.textContent=task.body;body.title='定位到当天日程';body.onclick=()=>locateTask(task);
+  const meta=document.createElement('div');meta.className='task-page-meta';
+  const date=document.createElement('button');date.type='button';date.className='task-page-date';
+  date.textContent=task.day_label||task.day;
+  date.onclick=()=>locateTask(task);
+  const ops=document.createElement('span');ops.className='task-page-ops';
+  if(!task.deleted&&!compact)ops.append(
+    opButton('↑','上移',()=>moveTask(task,'up')),
+    opButton('↓','下移',()=>moveTask(task,'down')),
+    opButton('编辑','编辑任务',()=>editTask(task))
+  );
+  ops.append(opButton(task.deleted?'恢复':'×',task.deleted?'恢复任务':'删除任务',()=>task.deleted?restoreTask(task):removeTask(task)));
+  meta.append(date,ops);
+  main.append(body,meta);
+  row.append(cb,main);
+  return row;
+}
+async function loadTasks(){
+  const pendingBox=$('taskPending'),doneBox=$('taskDone'),deletedBox=$('taskDeleted');
+  const panelPending=$('panelTaskPending');
+  const PANEL_LIMIT=30;
+  pendingBox.replaceChildren();doneBox.replaceChildren();deletedBox.replaceChildren();
+  panelPending.replaceChildren();
+  let data;
+  try{data=await bridge.apiGet('tasks',{})}
+  catch(err){
+    const message='任务读取失败：'+(err?.message||err);
+    $('taskMeta').textContent=message;$('panelTaskMeta').textContent=message;return
+  }
+  const pending=Array.isArray(data.pending)?data.pending:[];
+  const completed=Array.isArray(data.completed)?data.completed:[];
+  const deleted=Array.isArray(data.deleted)?data.deleted:[];
+  const todayPending=pending.filter(task=>task.day===data.today);
+  $('taskMeta').textContent=`未完成 ${pending.length} 个 · 今日完成 ${completed.length} 个${deleted.length?` · 已删除 ${deleted.length} 个`:''}（按实际完成日期统计）`;
+  $('panelTaskMeta').textContent=`今日未完成 ${todayPending.length} 个`;
+  if(!completed.length){
+    doneBox.append(taskEmpty('今天还没有完成任务。'));
+  }else for(const task of completed)doneBox.append(taskPageRow(task))
+  if(!pending.length){
+    pendingBox.append(taskEmpty('当前没有未完成任务。'));
+  }else for(const task of pending)pendingBox.append(taskPageRow(task));
+  $('taskDeletedWrap').hidden=!deleted.length;
+  for(const task of deleted)deletedBox.append(taskPageRow(task));
+  if(!todayPending.length){
+    panelPending.append(taskEmpty('今天没有新增未完成任务。'));
+  }else{
+    for(const task of todayPending.slice(0,PANEL_LIMIT))panelPending.append(taskPageRow(task,{compact:true}));
+    if(todayPending.length>PANEL_LIMIT)panelPending.append(taskEmpty(`还有 ${todayPending.length-PANEL_LIMIT} 个今日未完成任务，打开任务聚合页查看。`));
+  }
 }
 
 async function loadWeek(){
@@ -529,14 +1104,12 @@ async function loadWeek(){
   const start=fmt(monday),end=fmt(addDays(monday,6));
   $('dayTitle').textContent=`${start} ~ ${end} · 周`;
   const tl=$('timeline');tl.replaceChildren();
-  items=[];evidence={};
-  let counts={};
+  items=[];
   try{items=await bridge.apiGet('events',{start,end})}catch(e){items=[]}
   if(!Array.isArray(items))items=[];
-  try{counts=await bridge.apiGet('media-summary',{start,end})}catch(e){counts={}}
-  const visible=items.filter(item=>matches(item,counts[item.looki_id]));
-  $('dayMeta').textContent=items.length?`本周共 ${items.length} 条记录${visible.length!==items.length?` · 筛选后 ${visible.length} 条`:''}`:'';
-  if(!visible.length){tl.append(emptyBox('这一周没有符合条件的记录'));renderOutline([]);return}
+  const visible=items;
+  $('dayMeta').textContent=items.length?`本周共 ${items.length} 条记录`:'';
+  if(!visible.length){tl.append(emptyBox('这一周没有记录'));renderOutline([]);return}
   const byDay={};
   for(const item of visible)(byDay[item.date]||=[]).push(item);
   for(const dateStr of Object.keys(byDay).sort()){
@@ -591,18 +1164,15 @@ function timelineItem(item){
   const title=document.createElement('span');
   if(item.title){title.textContent=item.title}
   else{title.className='tl-untitled';title.textContent='未命名记录'}
-  titleRow.append(title,mediaBadges(item));
+  titleRow.append(title);
   if(item.source==='manual'){
     const badge=document.createElement('span');badge.className='badge manual';badge.textContent='手动';titleRow.append(badge);
   }
 
-  const entries=evidence[item.looki_id]||[];
   const ops=document.createElement('span');ops.className='tl-ops';
-  if(entries.length){
-    const evBtn=document.createElement('button');evBtn.type='button';evBtn.className='ghost';evBtn.textContent='证据';
-    evBtn.onclick=e=>{e.stopPropagation();const box=row.querySelector('.tl-evidence');if(box)box.hidden=!box.hidden};
-    ops.append(evBtn);
-  }
+  const correctionBtn=document.createElement('button');correctionBtn.type='button';correctionBtn.className='ghost';correctionBtn.textContent='纠正';
+  correctionBtn.onclick=e=>{e.stopPropagation();editCorrection(item,null)};
+  ops.append(correctionBtn);
   const editBtn=document.createElement('button');editBtn.type='button';editBtn.className='ghost';editBtn.textContent='编辑';
   editBtn.onclick=e=>{e.stopPropagation();edit(item)};
   ops.append(editBtn);titleRow.append(ops);
@@ -616,29 +1186,36 @@ function timelineItem(item){
   }
   if(item.description){
     const tag=document.createElement('div');tag.className='tl-tag';tag.textContent='详细描述 · 仅作线索';
-    const p=document.createElement('p');p.className='tl-desc';p.textContent=item.description;
-    body.append(tag,p);
+    body.append(tag,markdownBody(item.description,'tl-desc'));
   }
   if(item.audio_summary){
     const box=document.createElement('div');box.className='tl-audio';
     const tag=document.createElement('div');tag.className='tl-audio-tag';tag.textContent='音频摘要 · Looki 生成（不是原始录音）';
-    const p=document.createElement('p');p.textContent=item.audio_summary;
-    box.append(tag,p);body.append(box);
+    box.append(tag,markdownBody(item.audio_summary,'tl-audio-body'));body.append(box);
   }
   if(item.corrections&&item.corrections.length){
     const box=document.createElement('div');box.className='tl-corrections';
-    const head=document.createElement('div');head.className='tl-correction-head';head.textContent='对话校正 · 以最新注记为准';
+    const head=document.createElement('div');head.className='tl-correction-head';head.textContent='Bot 纠正总结 · 以最新注记为准';
     box.append(head);
     for(const correction of item.corrections){
       const note=document.createElement('div');note.className='tl-correction';
       const p=document.createElement('p');p.textContent=correction.note;
       const time=document.createElement('time');time.dateTime=correction.created_at;
       time.textContent=new Date(correction.created_at).toLocaleString('zh-CN');
-      note.append(p,time);box.append(note);
+      const cOps=document.createElement('div');cOps.className='tl-correction-ops';
+      cOps.append(
+        opButton('编辑','修改这条纠正',()=>editCorrection(item,correction)),
+        opButton('删除','删除这条纠正',()=>removeCorrection(correction))
+      );
+      note.append(p,time,cOps);box.append(note);
     }
     body.append(box);
   }
-  if(entries.length)body.append(evidenceBox(entries));
+  const related=dayTasks.filter(task=>task.schedule_id===item.id);
+  if(related.length){
+    const tag=document.createElement('div');tag.className='tl-tag';tag.textContent='相关任务 · 由 Looki 日志提取';
+    body.append(tag,taskList(related,{includeDeleted:true}));
+  }
   row.append(time,body);
   row.onclick=()=>select(item.id,false);
   return row;
@@ -654,7 +1231,8 @@ function select(id,scroll){
 
 /* ---------- 右侧：当天时间轴目录 ---------- */
 function renderOutline(items){
-  const box=$('outline');box.replaceChildren();
+  const box=$('outline');if(!box)return;
+  box.replaceChildren();
   if(!items||!items.length){
     const p=document.createElement('p');p.className='placeholder';
     p.textContent='这一天还没有日程。同步后会自动出现，单击条目即可跳到左侧对应时段。';
@@ -681,14 +1259,6 @@ function step(dir){
   day=fmt(d);syncCalToDay();selectedId=null;loadCalendar();loadPlan();
 }
 for(const b of $('scaleSwitch').children)b.onclick=()=>setScale(b.dataset.scale);
-for(const b of $('mediaFilters').children){
-  b.onclick=()=>{
-    mediaFilter=b.dataset.media;
-    for(const x of $('mediaFilters').children)x.classList.toggle('on',x===b);
-    loadPlan();
-  };
-}
-$('onlyEvidence').onchange=e=>{onlyEvidence=e.target.checked;loadPlan()};
 $('dPrev').onclick=()=>step(-1);
 $('dNext').onclick=()=>step(1);
 $('dToday').onclick=()=>{day=todayStr();syncCalToDay();selectedId=null;loadCalendar();loadPlan()};
@@ -748,7 +1318,7 @@ $('sync').onclick=async()=>{
   try{
     const result=await bridge.apiPost('sync',{});
     if(result.error)throw new Error(result.error);
-    await status();loadCalendar();loadPlan();
+    await status();loadCalendar();loadPlan();loadTasks();
   }catch(err){alert('同步失败：'+(err?.message||err))}
   finally{syncing=false;$('sync').disabled=false;$('sync').textContent='立即同步'}
 };
@@ -826,13 +1396,21 @@ async function loadConfig(){
   $('cfgNotice').classList.remove('err');
   keyRevealed=false;$('cfgKey').type='password';$('cfgKey').value=c.looki_api_key_masked||'';
   $('cfgUrl').value=c.looki_base_url||'';
-  $('cfgAuto').checked=!!c.auto_sync;$('cfgScope').value=c.clue_scope||'仅对管理成员开放';
+  $('cfgAuto').checked=!!c.auto_sync;$('cfgScope').value=c.clue_scope||'仅对管理员私聊开放';
   $('cfgGroup').checked=!!c.allow_group_query;$('cfgRaw').checked=!!c.store_raw_json;
   $('cfgInterval').value=c.sync_interval_minutes;$('cfgBackfill').value=c.backfill_days;
   $('cfgTz').value=c.timezone;$('cfgTimeout').value=c.request_timeout_seconds;
   $('cfgClueDays').value=c.clue_days;$('cfgMaxClues').value=c.max_clues;
   $('cfgWhitelistUsers').value=c.whitelist_user_ids||'';
   $('cfgWhitelistGroups').value=c.whitelist_group_ids||'';
+  $('cfgShowJournals').checked=c.show_looki_journals!==false;
+  $('cfgHideDeleted').checked=c.hide_deleted_tasks!==false;
+  $('cfgTaskReminders').checked=!!c.enable_task_reminders;
+  $('cfgTaskExpireDays').value=c.task_expire_days??3;
+  $('cfgReminderUsers').value=c.task_reminder_user_ids||'';
+  $('cfgTaskReminderInterval').value=c.task_reminder_interval_minutes??60;
+  $('cfgTaskAutoDelete').checked=c.task_auto_delete_low_value!==false;
+  $('cfgTaskCompletion').checked=c.task_completion_reply_enabled!==false;
   $('cfgImageCount').value=c.image_candidate_count??6;
   $('cfgImageOriginal').checked=!!c.image_send_original;
   $('cfgImageStyle').value=c.image_style_prompt||'';
@@ -854,7 +1432,38 @@ $('eye').onclick=async()=>{
     try{const c=await bridge.apiGet('config');$('cfgKey').value=c.looki_api_key_masked||''}catch(e){}
   }
 };
-$('cfgCancel').onclick=async()=>{await loadConfig();switchTab(false)};
+const setNav=$('setNav'),reduceMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
+function setActiveSection(sec){
+  for(const a of setNav.querySelectorAll('a'))a.classList.toggle('on',a.dataset.sec===sec);
+}
+function openConfigPanel(panel){
+  for(const other of document.querySelectorAll('.config-fold-panel'))other.open=other===panel;
+}
+setNav.onclick=e=>{
+  const a=e.target.closest('a');if(!a)return;
+  e.preventDefault();
+  const sec=document.getElementById(a.getAttribute('href').slice(1));if(!sec)return;
+  const panel=sec.closest('.config-fold-panel');if(panel)openConfigPanel(panel);
+  sec.scrollIntoView({behavior:reduceMotion.matches?'auto':'smooth',block:'start'});
+  setActiveSection(a.dataset.sec);
+};
+window.addEventListener('scroll',()=>{
+  if($('viewSettings').hidden)return;
+  const cards=[...setNav.querySelectorAll('a')].map(a=>document.getElementById(a.getAttribute('href').slice(1)))
+    .filter(card=>card&&card.getClientRects().length&&card.closest('.config-fold-panel')?.open!==false);
+  if(!cards.length)return;
+  const threshold=(parseFloat(getComputedStyle(cards[0]).scrollMarginTop)||140)+1;
+  let cur=cards[0],lastTop=-Infinity;
+  for(const card of cards){
+    const top=card.getBoundingClientRect().top;
+    if(top<=threshold&&top>lastTop+1){cur=card;lastTop=top}
+  }
+  const active=setNav.querySelector('a.on'),activeCard=active&&document.getElementById(active.getAttribute('href').slice(1));
+  if(activeCard&&cards.includes(activeCard)&&Math.abs(activeCard.getBoundingClientRect().top-cur.getBoundingClientRect().top)<=1)cur=activeCard;
+  setActiveSection(cur.id.replace('sec-',''));
+},{passive:true});
+setActiveSection('sync');
+$('cfgCancel').onclick=async()=>{await loadConfig();switchTab('plan')};
 $('cfgSave').onclick=async()=>{
   const body={
     looki_api_key:$('cfgKey').value.trim(),looki_base_url:$('cfgUrl').value.trim(),
@@ -864,16 +1473,29 @@ $('cfgSave').onclick=async()=>{
     timezone:$('cfgTz').value.trim(),request_timeout_seconds:+$('cfgTimeout').value,
     clue_days:+$('cfgClueDays').value,max_clues:+$('cfgMaxClues').value,
     whitelist_user_ids:$('cfgWhitelistUsers').value,whitelist_group_ids:$('cfgWhitelistGroups').value,
+    show_looki_journals:$('cfgShowJournals').checked,hide_deleted_tasks:$('cfgHideDeleted').checked,enable_task_reminders:$('cfgTaskReminders').checked,
+    task_expire_days:+$('cfgTaskExpireDays').value,
+    task_reminder_user_ids:$('cfgReminderUsers').value,
+    task_reminder_interval_minutes:+$('cfgTaskReminderInterval').value,
+    task_auto_delete_low_value:$('cfgTaskAutoDelete').checked,
+    task_completion_reply_enabled:$('cfgTaskCompletion').checked,
     image_candidate_count:+$('cfgImageCount').value,image_send_original:$('cfgImageOriginal').checked,
     image_style_prompt:$('cfgImageStyle').value.trim(),image_selection_provider_id:$('cfgSelectionProvider').value,
     image_generation_mode:$('cfgGenerationMode').value,image_generation_provider_id:$('cfgGenerationProvider').value,
     image_api_base_url:$('cfgImageApiUrl').value.trim(),image_api_model:$('cfgImageApiModel').value.trim(),
     image_api_key:$('cfgImageApiKey').value.trim(),
   };
-  try{await bridge.apiPost('config',body);await loadConfig();await status();switchTab(false)}
+  try{await bridge.apiPost('config',body);await loadConfig();await status();switchTab('plan');loadPlan()}
   catch(err){alert('保存失败：'+(err?.message||err))}
 };
 
-await Promise.all([loadCalendar(),loadPlan(),status()]);
+let lastScrollY=window.scrollY;
+window.addEventListener('scroll',()=>{
+  const y=window.scrollY;
+  document.querySelector('.topbar').classList.toggle('hide',y>lastScrollY&&y>80);
+  lastScrollY=y;
+},{passive:true});
+
+await Promise.all([loadCalendar(),loadPlan(),loadTasks(),status()]);
 </script>
 </body></html>

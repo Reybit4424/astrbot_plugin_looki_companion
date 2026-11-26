@@ -41,6 +41,20 @@ def _extract_items(payload: Any) -> list[Any]:
     return []
 
 
+def _period_text(selected: dict[str, Any]) -> str:
+    """把选中媒体所属活动的时间整理成不带时区偏移的可读文案。"""
+    def readable(value: Any) -> str:
+        text = str(value or "")
+        try:
+            return datetime.fromisoformat(text).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return text.replace("T", " ")
+
+    start = readable(selected.get("start_at"))
+    end = readable(selected.get("end_at"))
+    return f"{start}–{end}" if end else start
+
+
 def _image_suffix(data: bytes) -> str | None:
     if data.startswith(b"\xff\xd8\xff"):
         return ".jpg"
@@ -70,29 +84,6 @@ class LookiImageService:
                     path.unlink()
             except FileNotFoundError:
                 pass
-
-    async def send_activity_image(self, event: Any, query: str, preference: str = "", style_adjustment: str = "") -> str:
-        item = await asyncio.to_thread(self.plugin.store.find_latest_looki_activity, query)
-        if not item:
-            return f"未在已保存日程中找到与「{query}」相关的活动，请补充其他关键词或大概日期。"
-        zone = ZoneInfo(str(self.plugin.config.get("timezone") or "Asia/Shanghai"))
-        start = datetime.fromisoformat(item["start_at"]).astimezone(zone)
-        end = datetime.fromisoformat(item["end_at"]).astimezone(zone)
-        result = await self.send_period_image(
-            event,
-            start.date().isoformat(),
-            start.strftime("%H:%M:%S"),
-            end.strftime("%H:%M:%S"),
-            preference,
-            style_adjustment,
-            end.date().isoformat(),
-            query=query,
-        )
-        if start.date() == end.date():
-            period = f"{start.date().isoformat()} {start.strftime('%H:%M:%S')}–{end.strftime('%H:%M:%S')}"
-        else:
-            period = f"{start.date().isoformat()} {start.strftime('%H:%M:%S')}–{end.date().isoformat()} {end.strftime('%H:%M:%S')}"
-        return f"已按活动「{query}」定位到最近一次日程：{period}「{item['title']}」。{result}"
 
     async def send_period_image(
         self,
@@ -141,12 +132,12 @@ class LookiImageService:
         sent = False
         try:
             candidate_started = time.monotonic()
+            nearby_used = False
             candidates = await self._download_candidates(matches, count, work) if matches else []
-            expanded = False
-            if len(candidates) < count and nearby:
-                additional = await self._download_candidates(nearby, count - len(candidates), work)
-                expanded = bool(additional)
-                candidates.extend(additional)
+            if not candidates and nearby:
+                # 目标时段没有任何可用媒体时才退回相邻活动，并在回复里明确说明，避免把相邻活动照片当成目标
+                candidates = await self._download_candidates(nearby, count, work)
+                nearby_used = bool(candidates)
             logger.info("[Looki] 候选准备完成：%d 张，耗时 %.1f 秒", len(candidates), time.monotonic() - candidate_started)
             if not candidates:
                 suffix = "；已尝试同日相邻活动，但仍无可用媒体" if nearby else ""
@@ -157,24 +148,18 @@ class LookiImageService:
             selected = candidates[selected_index]
             if self.plugin.config.get("image_send_original", False):
                 output = selected["path"]
-                mode = "原图"
+                suffix = ""
             else:
                 generation_started = time.monotonic()
                 output = await self._generate_image(selected["path"], work, style_adjustment, event)
                 logger.info("[Looki] 图生图完成，耗时 %.1f 秒", time.monotonic() - generation_started)
-                mode = "图生图结果"
+                suffix = "（图生图）"
             await event.send(MessageChain().file_image(str(output)))
             sent = True
             logger.info("[Looki] 图片工具总耗时 %.1f 秒", time.monotonic() - started)
-            source_start = str(selected.get("start_at") or "").replace("T", " ")
-            source_end = str(selected.get("end_at") or "").replace("T", " ")
-            source_period = f"{source_start}–{source_end}" if source_end else source_start
-            scope = "候选不足时已纳入同日相邻活动" if expanded else "仅使用原时段候选"
-            return (
-                f"已从 {len(candidates)} 张候选图中选定第 {selected_index + 1} 张并发送{mode}；"
-                f"照片来源：{source_period}「{selected.get('title') or '未命名活动'}」；{scope}；"
-                "只发送了最终 1 张图片，请勿重复发图。"
-            )
+            prefix = "附近 " if nearby_used else " "
+            notice = "（该活动不在你指定的时段内）" if nearby_used else ""
+            return f"已发送{prefix}{_period_text(selected)}「{selected.get('title') or '未命名活动'}」的照片{notice}{suffix}。"
         finally:
             if not sent:
                 shutil.rmtree(work, ignore_errors=True)
@@ -222,8 +207,8 @@ class LookiImageService:
             for item in matches:
                 raw_items: list[Any] = []
                 cursor = None
-                for _page in range(2):
-                    params: dict[str, Any] = {"limit": 20}
+                for _page in range(20):
+                    params: dict[str, Any] = {"limit": 50}
                     if cursor:
                         params["cursor"] = cursor
                     try:
@@ -242,20 +227,37 @@ class LookiImageService:
                     cursor = data.get("next_cursor") if isinstance(data, dict) else None
                     if not isinstance(data, dict) or not data.get("has_more") or not cursor:
                         break
-                sources = []
+                images: list[tuple[str, str]] = []
+                videos: list[tuple[str, str]] = []
                 skipped_types: list[str] = []
+                thumbnails = 0
                 for raw in raw_items:
-                    media_type, url = self._file_media_url(raw)
-                    if not url or url in seen:
-                        continue
-                    seen.add(url)
-                    if media_type not in ("image", "video"):
-                        # 音频/转写等由 media_service 证据层保存，不再静默丢弃
-                        skipped_types.append(media_type)
-                        continue
-                    sources.append((media_type, url))
-                if skipped_types:
-                    logger.info("[Looki] 活动 %s 含非图像媒体 %s，已交给媒体证据层", item["looki_id"][:16], sorted(set(skipped_types)))
+                    for media_type, url in self._file_media_entries(raw):
+                        if not url or url in seen:
+                            continue
+                        seen.add(url)
+                        if media_type == "image":
+                            images.append((media_type, url))
+                        elif media_type == "video":
+                            videos.append((media_type, url))
+                        else:
+                            # 音频/转写等不是可发送的图片候选，跳过
+                            skipped_types.append(media_type)
+                    thumb = raw.get("thumbnail") if isinstance(raw, dict) else None
+                    if isinstance(thumb, dict) and self._url_of(thumb):
+                        thumbnails += 1
+                logger.info(
+                    "[Looki] 活动 %s：文件 %d 个，照片 %d，视频 %d，可作照片的视频缩略图 %d%s",
+                    item["looki_id"][:16],
+                    len(raw_items),
+                    len(images),
+                    len(videos),
+                    thumbnails,
+                    f"，忽略 {sorted(set(skipped_types))}" if skipped_types else "",
+                )
+                # 照片优先：录音/录像阶段的文件通常只有视频，但其 thumbnail 就是拍摄画面，
+                # 先以缩略图作为照片候选，避免必须依赖 ffmpeg 抽帧才“看得到照片”。
+                sources = images + videos
                 if sources:
                     groups.append((item, sources))
 
@@ -305,6 +307,39 @@ class LookiImageService:
             detail = ImageStat.Stat(edges).mean[0]
         acceptable = 6 <= mean <= 249 and contrast >= 3 and detail >= 2
         return acceptable, detail + contrast * 0.1
+
+    @staticmethod
+    def _url_of(obj: Any) -> str:
+        if not isinstance(obj, dict):
+            return ""
+        for key in ("temporary_url", "url", "signed_url", "download_url"):
+            value = obj.get(key)
+            if isinstance(value, str) and value.startswith(("http://", "https://")):
+                return value
+        return ""
+
+    @classmethod
+    def _file_media_entries(cls, raw: Any) -> list[tuple[str, str]]:
+        """一个 /files 项可能同时给出原文件与缩略图。
+
+        视频/音频项的 `thumbnail` 就是录制画面本身，必须作为照片候选返回，
+        否则“录音阶段明明有照片”会因为不走 ffmpeg 抽帧而完全抓不到。
+        """
+        if not isinstance(raw, dict):
+            return []
+        entries: list[tuple[str, str]] = []
+        media_type, url = cls._file_media_url(raw)
+        if url:
+            entries.append((media_type, url))
+        if media_type != "image":
+            for holder in (raw, raw.get("file")):
+                if not isinstance(holder, dict):
+                    continue
+                thumb_url = cls._url_of(holder.get("thumbnail"))
+                if thumb_url:
+                    entries.append(("image", thumb_url))
+                    break
+        return entries
 
     @staticmethod
     def _file_media_url(raw: Any) -> tuple[str, str]:
